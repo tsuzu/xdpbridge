@@ -19,10 +19,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/xdpl2/xdpl2/internal/api"
-	"github.com/xdpl2/xdpl2/internal/datapath"
-	"github.com/xdpl2/xdpl2/internal/flood"
-	"github.com/xdpl2/xdpl2/internal/k8swatch"
+	"github.com/tsuzu/xdpl2/internal/api"
+	"github.com/tsuzu/xdpl2/internal/datapath"
+	"github.com/tsuzu/xdpl2/internal/flood"
+	"github.com/tsuzu/xdpl2/internal/k8swatch"
 )
 
 // Dataplane is the subset of *datapath.Datapath the server needs; it is an

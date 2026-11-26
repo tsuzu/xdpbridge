@@ -23,9 +23,9 @@ import (
 	"github.com/containernetworking/plugins/pkg/ns"
 	"github.com/vishvananda/netlink"
 
-	"github.com/xdpl2/xdpl2/internal/api"
-	"github.com/xdpl2/xdpl2/internal/cniconfig"
-	"github.com/xdpl2/xdpl2/internal/version"
+	"github.com/tsuzu/xdpl2/internal/api"
+	"github.com/tsuzu/xdpl2/internal/cniconfig"
+	"github.com/tsuzu/xdpl2/internal/version"
 )
 
 func main() {

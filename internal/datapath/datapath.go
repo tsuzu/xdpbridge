@@ -22,7 +22,7 @@ import (
 	"github.com/vishvananda/netlink"
 	"golang.org/x/sys/unix"
 
-	"github.com/xdpl2/xdpl2/internal/bpfobj"
+	"github.com/tsuzu/xdpl2/internal/bpfobj"
 )
 
 // XDPMode selects how the uplink XDP program is attached.

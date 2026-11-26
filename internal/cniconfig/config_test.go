@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/xdpl2/xdpl2/internal/api"
+	"github.com/tsuzu/xdpl2/internal/api"
 )
 
 func TestParseDefaults(t *testing.T) {

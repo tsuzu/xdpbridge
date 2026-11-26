@@ -14,7 +14,7 @@ import (
 	"github.com/containernetworking/cni/pkg/types"
 	"github.com/containernetworking/cni/pkg/version"
 
-	"github.com/xdpl2/xdpl2/internal/api"
+	"github.com/tsuzu/xdpl2/internal/api"
 )
 
 // NetConf is the plugin configuration.

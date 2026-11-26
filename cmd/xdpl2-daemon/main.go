@@ -34,12 +34,12 @@ import (
 
 	"github.com/vishvananda/netlink"
 
-	"github.com/xdpl2/xdpl2/internal/api"
-	"github.com/xdpl2/xdpl2/internal/daemon"
-	"github.com/xdpl2/xdpl2/internal/datapath"
-	"github.com/xdpl2/xdpl2/internal/flood"
-	"github.com/xdpl2/xdpl2/internal/k8swatch"
-	"github.com/xdpl2/xdpl2/internal/version"
+	"github.com/tsuzu/xdpl2/internal/api"
+	"github.com/tsuzu/xdpl2/internal/daemon"
+	"github.com/tsuzu/xdpl2/internal/datapath"
+	"github.com/tsuzu/xdpl2/internal/flood"
+	"github.com/tsuzu/xdpl2/internal/k8swatch"
+	"github.com/tsuzu/xdpl2/internal/version"
 )
 
 type options struct {
