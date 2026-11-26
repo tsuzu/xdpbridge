@@ -68,8 +68,11 @@ node() { nsenter --net="/run/netns/${P}node" "$@"; }
 cleanup() {
 	[ -n "${DPID:-}" ] && kill "$DPID" 2>/dev/null && wait "$DPID" 2>/dev/null
 	DPID=
-	pkill -f "iperf3 -s -1" 2>/dev/null
-	for n in $(ip netns list | awk '{print $1}' | grep "^$P"); do ip netns del "$n"; done
+	local n
+	for n in $(ip netns list | awk '{print $1}' | grep "^$P"); do
+		ip netns pids "$n" 2>/dev/null | xargs -r kill 2>/dev/null
+		ip netns del "$n"
+	done
 	if [ -n "${WORK:-}" ]; then
 		umount "$WORK/bpffs" 2>/dev/null
 		[ "$KEEP" = 1 ] && log "kept $WORK" || rm -rf "$WORK"
@@ -351,6 +354,54 @@ run_suite() {
 	}
 	check g.3 "capture: pod4 frames leave the uplink tagged with VLAN 100" vlan_tag_capture
 	check g.4 "pod4 (VLAN 100) cannot reach untagged pod1" eval "ns pod4 ip route add 192.0.2.0/24 dev eth1; ! ns pod4 ping -c 2 -W 1 $IP1 >/dev/null"
+
+	# g.5+: the host reaches the LAN through an 802.1Q subinterface of the
+	# uplink (host IP on uplink0.100), created while the daemon runs.
+	local MAC4
+	MAC4=$(pod_mac pod4)
+	ns node ip link add link uplink0 name uplink0.100 type vlan id 100
+	ns node ip link set uplink0.100 up
+	ns node ip addr add 198.51.100.1/24 dev uplink0.100
+	host_vlan_seen() {
+		for _ in $(seq 50); do
+			node "$BIN/xdpl2-daemon" status --socket "$SOCK" | tr -d ' \n' | grep -q '"hostVLANs":\[0,100\]' && return 0
+			sleep 0.1
+		done
+		node "$BIN/xdpl2-daemon" status --socket "$SOCK"
+		return 1
+	}
+	check g.5 "daemon discovers host VLAN subinterface uplink0.100 at runtime" host_vlan_seen
+	check g.6 "ARP host (uplink0.100) -> pod4 resolves pod4 MAC" arp_dir node "$IP4" "$MAC4"
+	check g.7 "ARP pod4 -> host (uplink0.100) resolves host MAC" arp_dir pod4 198.51.100.1 $HOST_MAC
+	check g.8 "ping host (uplink0.100) <-> pod4 both ways" eval "ping_ok node $IP4 && ping_ok pod4 198.51.100.1"
+	check g.9 "TCP (iperf3) host (uplink0.100) -> pod4" eval "ns pod4 iperf3 -s -1 -D >/dev/null; sleep 0.5; ns node iperf3 -c $IP4 -t 1 >/dev/null"
+	vbcast() { # vbcast <sender-ns> <src-ip> <tag> <want: ns:if ...> -- <must-not: ns:if ...>
+		local s=$1 src=$2 tag=$3; shift 3
+		local want=() not=() mode=want x
+		for x in "$@"; do
+			[ "$x" = -- ] && { mode=not; continue; }
+			[ $mode = want ] && want+=("$x") || not+=("$x")
+		done
+		for x in "${want[@]}" "${not[@]}"; do
+			capture "${x%%:*}" "${x#*:}" "udp port 9998" 3 "$WORK/vb-${x%%:*}-${x#*:}.cap"
+		done
+		sleep 0.7
+		ns "$s" $UDP send 198.51.100.255 9998 "$tag" "$src"
+		waitbg
+		local bad=0
+		for x in "${want[@]}"; do
+			grep -q "$tag" "$WORK/vb-${x%%:*}-${x#*:}.cap" || { echo "$x did not see $tag"; bad=1; }
+		done
+		for x in "${not[@]}"; do
+			grep -q "$tag" "$WORK/vb-${x%%:*}-${x#*:}.cap" && { echo "$x saw $tag (VLAN leak)"; bad=1; }
+		done
+		return $bad
+	}
+	check g.10 "broadcast from host on VLAN 100 reaches pod4 and ext0.100, not untagged pods" \
+		vbcast node 198.51.100.1 vb-host pod4:eth1 ext:ext0.100 -- pod1:eth1 pod2:eth1
+	check g.11 "broadcast from pod4 reaches host uplink0.100 and ext0.100, not untagged pods" \
+		vbcast pod4 "$IP4" vb-pod4 node:uplink0.100 ext:ext0.100 -- pod1:eth1 pod2:eth1
+	check g.12 "untagged host <-> pod still works with a VLAN subinterface present" eval "arp_dir node $IP2 $MAC2 && ping_ok pod1 192.0.2.1"
 
 	# IPv6: ND/MLD ride the multicast flood path.
 	ipv6_ll() {
