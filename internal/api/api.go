@@ -90,6 +90,9 @@ type Status struct {
 	Counters map[string]uint64 `json:"counters"`
 	// UnregisteredVeths lists host veths with our prefix but no registration.
 	UnregisteredVeths []string `json:"unregisteredVeths,omitempty"`
+	// HostVLANs lists the VLANs on which the host stack is a switch port
+	// (0 = the uplink itself; others are 802.1Q subinterfaces).
+	HostVLANs []int `json:"hostVLANs,omitempty"`
 	// K8s is present when the Kubernetes-API watchdog is enabled.
 	K8s *K8sStatus `json:"k8s,omitempty"`
 }

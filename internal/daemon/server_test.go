@@ -3,6 +3,7 @@
 package daemon
 
 import (
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -29,6 +30,9 @@ type fakeDP struct {
 	pinned  map[uint32]int
 	failSet bool
 	xdp     bool
+	// hostVLANs simulates 802.1Q subinterfaces; synced records the last sync.
+	hostVLANs map[uint16]net.HardwareAddr
+	synced    map[uint16]net.HardwareAddr
 }
 
 func newFakeDP() *fakeDP {
@@ -139,6 +143,23 @@ func (f *fakeDP) UplinkMAC() net.HardwareAddr {
 	return net.HardwareAddr{0x02, 0, 0, 0, 0x01, 0x01}
 }
 func (f *fakeDP) Mode() datapath.XDPMode { return datapath.XDPModeNative }
+
+func (f *fakeDP) HostVLANs() (map[uint16]net.HardwareAddr, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := map[uint16]net.HardwareAddr{0: f.UplinkMAC()}
+	for k, v := range f.hostVLANs {
+		out[k] = v
+	}
+	return out, nil
+}
+
+func (f *fakeDP) SyncHostVLANs(want map[uint16]net.HardwareAddr) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.synced = want
+	return nil
+}
 
 type fakeLinks struct {
 	mu    sync.Mutex
@@ -478,5 +499,30 @@ func TestK8sCrossCheckSurfacesInHealthAndMetrics(t *testing.T) {
 	// Disabled watchdog: no k8s section at all.
 	if New(Config{Uplink: "u"}, newFakeDP(), links).Status().K8s != nil {
 		t.Error("k8s status present while disabled")
+	}
+}
+
+func TestHostVLANSyncAndConflict(t *testing.T) {
+	h := newHarness(t)
+	sub := net.HardwareAddr{0x02, 0, 0, 0, 0x01, 0x02}
+	h.dp.mu.Lock()
+	h.dp.hostVLANs = map[uint16]net.HardwareAddr{100: sub}
+	h.dp.mu.Unlock()
+	h.srv.Reconcile()
+	h.dp.mu.Lock()
+	got := h.dp.synced
+	h.dp.mu.Unlock()
+	if len(got) != 2 || got[100].String() != sub.String() || got[0] == nil {
+		t.Fatalf("synced host VLANs: %v", got)
+	}
+	if st := h.srv.Status(); fmt.Sprint(st.HostVLANs) != "[0 100]" {
+		t.Errorf("status hostVLANs = %v", st.HostVLANs)
+	}
+	_, err := h.client.AddPort(req("c1", "xlaaa", sub.String(), 100))
+	if he, ok := err.(*api.HTTPError); !ok || he.Code != 409 {
+		t.Errorf("registering the host subinterface MAC on its VLAN: %v", err)
+	}
+	if _, err := h.client.AddPort(req("c1", "xlaaa", sub.String(), 200)); err != nil {
+		t.Errorf("same MAC on another VLAN should be allowed: %v", err)
 	}
 }

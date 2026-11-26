@@ -154,6 +154,14 @@ func Open(opts Options) (*Datapath, error) {
 		d.objs.Close()
 		return nil, fmt.Errorf("programming host port: %w", err)
 	}
+	hv, err := d.HostVLANs()
+	if err == nil {
+		err = d.SyncHostVLANs(hv)
+	}
+	if err != nil {
+		d.objs.Close()
+		return nil, fmt.Errorf("programming host VLANs: %w", err)
+	}
 	return d, nil
 }
 
@@ -354,6 +362,89 @@ func (d *Datapath) SetPort(p PortSpec, old *PortSpec) error {
 	if err := d.objs.Ports.Put(fdbKey(p.MAC, p.VLAN), bpfobj.Xdpl2FdbVal{PortId: p.ID}); err != nil {
 		return fmt.Errorf("ports: %w", err)
 	}
+	if err := d.objs.LocalMacs.Put(macKey(p.MAC), p.ID); err != nil {
+		return fmt.Errorf("local_macs: %w", err)
+	}
+	return nil
+}
+
+func macKey(mac net.HardwareAddr) bpfobj.Xdpl2MacKey {
+	var k bpfobj.Xdpl2MacKey
+	copy(k.Mac[:], mac)
+	return k
+}
+
+// HostVLANs discovers the host's interfaces on the uplink's segment: the
+// uplink itself (VLAN 0) and its 802.1Q subinterfaces in this netns.
+func (d *Datapath) HostVLANs() (map[uint16]net.HardwareAddr, error) {
+	out := map[uint16]net.HardwareAddr{0: d.uplink.Attrs().HardwareAddr}
+	links, err := netlink.LinkList()
+	if err != nil {
+		return nil, err
+	}
+	for _, l := range links {
+		v, ok := l.(*netlink.Vlan)
+		if !ok || v.Attrs().ParentIndex != d.uplink.Attrs().Index {
+			continue
+		}
+		if v.VlanProtocol != netlink.VLAN_PROTOCOL_8021Q && v.VlanProtocol != netlink.VLAN_PROTOCOL_UNKNOWN {
+			continue // 802.1ad S-VLAN subinterfaces are not switched
+		}
+		if v.VlanId <= 0 || v.VlanId > 4094 || len(v.Attrs().HardwareAddr) != 6 {
+			continue
+		}
+		out[uint16(v.VlanId)] = v.Attrs().HardwareAddr
+	}
+	return out, nil
+}
+
+// SyncHostVLANs makes host_vlans, the host's fdb entries and local_macs
+// match want (VLAN id -> host interface MAC); entries for VLANs no longer
+// present are removed. VLAN 0 must be included.
+func (d *Datapath) SyncHostVLANs(want map[uint16]net.HardwareAddr) error {
+	var (
+		k  uint32
+		hv bpfobj.Xdpl2HostVlan
+	)
+	stale := map[uint16]net.HardwareAddr{}
+	it := d.objs.HostVlans.Iterate()
+	for it.Next(&k, &hv) {
+		mac := append(net.HardwareAddr(nil), hv.Mac[:]...)
+		if w, ok := want[uint16(k)]; !ok || w.String() != mac.String() {
+			stale[uint16(k)] = mac
+		}
+	}
+	if err := it.Err(); err != nil {
+		return err
+	}
+	keepMAC := map[string]bool{}
+	for _, m := range want {
+		keepMAC[m.String()] = true
+	}
+	for vid, mac := range stale {
+		_ = d.objs.HostVlans.Delete(uint32(vid))
+		var v bpfobj.Xdpl2FdbVal
+		if d.objs.Ports.Lookup(fdbKey(mac, vid), &v) == nil && v.PortId == HostPortID {
+			_ = d.objs.Ports.Delete(fdbKey(mac, vid))
+		}
+		var id uint32
+		if !keepMAC[mac.String()] && d.objs.LocalMacs.Lookup(macKey(mac), &id) == nil && id == HostPortID {
+			_ = d.objs.LocalMacs.Delete(macKey(mac))
+		}
+	}
+	for vid, mac := range want {
+		var v bpfobj.Xdpl2HostVlan
+		copy(v.Mac[:], mac)
+		if err := d.objs.HostVlans.Put(uint32(vid), &v); err != nil {
+			return fmt.Errorf("host_vlans: %w", err)
+		}
+		if err := d.objs.Ports.Put(fdbKey(mac, vid), bpfobj.Xdpl2FdbVal{PortId: HostPortID}); err != nil {
+			return fmt.Errorf("ports: %w", err)
+		}
+		if err := d.objs.LocalMacs.Put(macKey(mac), uint32(HostPortID)); err != nil {
+			return fmt.Errorf("local_macs: %w", err)
+		}
+	}
 	return nil
 }
 
@@ -364,6 +455,12 @@ func (d *Datapath) deleteEntries(old, keep PortSpec) {
 		var v bpfobj.Xdpl2FdbVal
 		if d.objs.Ports.Lookup(k, &v) == nil && v.PortId == old.ID {
 			_ = d.objs.Ports.Delete(k)
+		}
+	}
+	if old.MAC.String() != keep.MAC.String() && len(old.MAC) == 6 {
+		var id uint32
+		if d.objs.LocalMacs.Lookup(macKey(old.MAC), &id) == nil && id == old.ID {
+			_ = d.objs.LocalMacs.Delete(macKey(old.MAC))
 		}
 	}
 	if old.Kind == KindPod && old.Ifindex != keep.Ifindex {

@@ -39,6 +39,8 @@ type Dataplane interface {
 	PortLinkPinned(id uint32, ifindex int) bool
 	Stats() (map[string]uint64, error)
 	XDPAttached() bool
+	HostVLANs() (map[uint16]net.HardwareAddr, error)
+	SyncHostVLANs(map[uint16]net.HardwareAddr) error
 	UplinkIndex() int
 	UplinkMAC() net.HardwareAddr
 	Mode() datapath.XDPMode
@@ -95,6 +97,7 @@ type Server struct {
 	unregistered []string
 	suspects     map[string]int // unregistered veths seen in consecutive passes
 	k8s          *api.K8sStatus
+	hostVLANs    map[uint16]net.HardwareAddr
 	repairs      atomic.Uint64
 	gcs          atomic.Uint64
 }
@@ -183,6 +186,9 @@ func (s *Server) AddPort(req api.PortRequest) (*api.Port, error) {
 	}
 	if req.VLAN == 0 && req.MAC == s.dp.UplinkMAC().String() {
 		return nil, &httpErr{http.StatusConflict, fmt.Errorf("MAC %s is the host MAC", req.MAC)}
+	}
+	if m, ok := s.hostVLANs[req.VLAN]; ok && m.String() == req.MAC {
+		return nil, &httpErr{http.StatusConflict, fmt.Errorf("MAC %s is the host's MAC on VLAN %d", req.MAC, req.VLAN)}
 	}
 
 	old, exists := s.ports[key]
@@ -303,10 +309,16 @@ func (s *Server) saveLocked() error {
 // Ports whose host veth no longer exists are dropped.
 func (s *Server) Restore() error {
 	if s.cfg.StateFile == "" {
+		s.mu.Lock()
+		s.syncHostVLANsLocked()
+		s.mu.Unlock()
 		return nil
 	}
 	b, err := os.ReadFile(s.cfg.StateFile)
 	if errors.Is(err, os.ErrNotExist) {
+		s.mu.Lock()
+		s.syncHostVLANsLocked()
+		s.mu.Unlock()
 		return nil
 	}
 	if err != nil {
@@ -318,6 +330,7 @@ func (s *Server) Restore() error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.syncHostVLANsLocked()
 	for i := range st.Ports {
 		p := st.Ports[i]
 		idx, err := s.links.IndexByName(p.HostIfName)
@@ -410,11 +423,18 @@ func (s *Server) Reconcile() {
 		_ = s.dp.SetPort(datapath.PortSpec{ID: datapath.HostPortID, Ifindex: s.dp.UplinkIndex(), MAC: s.dp.UplinkMAC(), Kind: datapath.KindHost}, nil)
 	}
 
-	// Orphaned map entries.
+	// Host VLAN subinterfaces may come and go at any time.
+	if err := s.syncHostVLANsLocked(); err != nil {
+		problems = append(problems, "host VLAN sync failed: "+err.Error())
+	}
+
+	// Orphaned map entries. Host entries are owned by syncHostVLANsLocked.
 	if fdb, err := s.dp.FDB(); err == nil {
 		for _, e := range fdb {
-			if e.PortID == datapath.HostPortID && e.VLAN == 0 && e.MAC.String() == s.dp.UplinkMAC().String() {
-				continue
+			if e.PortID == datapath.HostPortID {
+				if m, ok := s.hostVLANs[e.VLAN]; ok && m.String() == e.MAC.String() {
+					continue
+				}
 			}
 			p, ok := byID[e.PortID]
 			if !ok || p.MAC != e.MAC.String() || p.VLAN != e.VLAN {
@@ -489,6 +509,28 @@ func fdbSetKey(mac net.HardwareAddr, vlan uint16) string {
 // want that is missing or wrong, or "" if all is in place. fdb is a snapshot
 // of the forwarding database taken at the start of the pass (re-attaching a
 // port to a new ifindex does not change its fdb entry).
+// syncHostVLANsLocked programs the host's VLAN memberships (the uplink and
+// its 802.1Q subinterfaces) into the data path.
+func (s *Server) syncHostVLANsLocked() error {
+	want, err := s.dp.HostVLANs()
+	if err != nil {
+		return err
+	}
+	if err := s.dp.SyncHostVLANs(want); err != nil {
+		return err
+	}
+	if len(want) != len(s.hostVLANs) {
+		vids := make([]int, 0, len(want))
+		for v := range want {
+			vids = append(vids, int(v))
+		}
+		sort.Ints(vids)
+		s.log.Info("host VLAN membership", "vlans", vids)
+	}
+	s.hostVLANs = want
+	return nil
+}
+
 // k8sCheckLocked cross-checks registrations against the pods the API server
 // says are on this node, records the result and returns problems.
 func (s *Server) k8sCheckLocked() []string {
@@ -563,6 +605,10 @@ func (s *Server) Status() api.Status {
 		k := *s.k8s
 		st.K8s = &k
 	}
+	for v := range s.hostVLANs {
+		st.HostVLANs = append(st.HostVLANs, int(v))
+	}
+	sort.Ints(st.HostVLANs)
 	s.mu.Unlock()
 	if !s.dp.XDPAttached() && !contains(st.Problems, "XDP program not attached") {
 		st.Problems = append(st.Problems, "XDP program not attached to uplink "+s.cfg.Uplink)

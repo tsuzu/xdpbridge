@@ -48,6 +48,22 @@ struct port {
 	__u8 pad[2];
 };
 
+/*
+ * Value of the "host_vlans" map, keyed by VLAN id (0 = untagged). The host
+ * stack is a member of VLAN v when the uplink itself (v = 0) or an 802.1Q
+ * subinterface of it (v > 0) exists; mac is that interface's MAC.
+ */
+struct host_vlan {
+	__u8 mac[6];
+	__u8 pad[2];
+};
+
+/* Key of the "local_macs" map: every MAC owned by a local port or the host. */
+struct mac_key {
+	__u8 mac[6];
+	__u8 pad[2];
+};
+
 /* Single-entry "config" array. */
 struct config {
 	__u32 uplink_ifindex;
