@@ -62,7 +62,11 @@ type Options struct {
 	PinDir   string  // bpffs directory, e.g. /sys/fs/bpf/xdpl2
 	Mode     XDPMode // XDP attach mode
 	ForceXDP bool    // replace a foreign XDP program on the uplink
-	Logger   *slog.Logger
+	// RestoreFile records the uplink settings xdpl2 changes (promiscuous
+	// mode, VLAN offloads) the first time it attaches, so Teardown can put
+	// them back. Empty disables recording.
+	RestoreFile string
+	Logger      *slog.Logger
 }
 
 // Datapath is the loaded, attached data path.
@@ -140,13 +144,24 @@ func Open(opts Options) (*Datapath, error) {
 	}
 	// Frames for pod MACs must reach the uplink; NICs filter unicast
 	// by destination MAC unless promiscuous.
+	rs := loadRestore(opts.RestoreFile, opts.Uplink)
+	if !rs.recorded {
+		rs.PromiscWasOn = uplink.Attrs().Promisc != 0
+		rs.recorded = true
+	}
 	if err := netlink.SetPromiscOn(uplink); err != nil {
 		d.log.Warn("could not enable promiscuous mode on uplink", "err", err)
 	}
-	if on, err := disableVLANOffload(opts.Uplink); err != nil {
+	if off, on, err := disableVLANOffload(opts.Uplink); err != nil {
 		d.log.Warn("could not query uplink offloads; VLAN access ports may not work", "err", err)
-	} else if len(on) > 0 {
-		d.log.Warn("uplink keeps VLAN offloads on; tagged traffic to VLAN access ports may not be switched", "features", on)
+	} else {
+		rs.addOffloads(off)
+		if len(on) > 0 {
+			d.log.Warn("uplink keeps VLAN offloads on; tagged traffic to VLAN access ports may not be switched", "features", on)
+		}
+	}
+	if err := rs.save(opts.RestoreFile); err != nil {
+		d.log.Warn("could not record uplink settings for teardown", "file", opts.RestoreFile, "err", err)
 	}
 	if err := d.SetPort(PortSpec{
 		ID: HostPortID, Ifindex: uplink.Attrs().Index, MAC: uplink.Attrs().HardwareAddr, Kind: KindHost,
@@ -616,25 +631,4 @@ func (d *Datapath) Close() error {
 	d.links = map[string]link.Link{}
 	d.mu.Unlock()
 	return d.objs.Close()
-}
-
-// Teardown detaches everything and removes all pins below PinDir.
-func Teardown(pinDir string) error {
-	linkDir := filepath.Join(pinDir, "links")
-	entries, _ := os.ReadDir(linkDir)
-	for _, e := range entries {
-		p := filepath.Join(linkDir, e.Name())
-		if l, err := link.LoadPinnedLink(p, nil); err == nil {
-			_ = l.Unpin()
-			_ = l.Close()
-		} else {
-			_ = os.Remove(p)
-		}
-	}
-	_ = os.Remove(linkDir)
-	entries, _ = os.ReadDir(pinDir)
-	for _, e := range entries {
-		_ = os.Remove(filepath.Join(pinDir, e.Name()))
-	}
-	return os.Remove(pinDir)
 }

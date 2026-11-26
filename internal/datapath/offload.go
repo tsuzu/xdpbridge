@@ -12,17 +12,17 @@ import (
 // filtering would drop tags without a host VLAN device.
 var vlanOffloadFeatures = []string{"rx-vlan-hw-parse", "rx-vlan-filter", "rx-vlan-stag-hw-parse", "rx-vlan-stag-filter"}
 
-// disableVLANOffload turns off the features above where the driver allows it
-// and returns those that stay on.
-func disableVLANOffload(ifName string) (stillOn []string, err error) {
+// disableVLANOffload turns off the features above where the driver allows it.
+// It returns the features it turned off and those that stay on.
+func disableVLANOffload(ifName string) (turnedOff, stillOn []string, err error) {
 	e, err := ethtool.NewEthtool()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer e.Close()
 	feats, err := e.FeaturesWithState(ifName)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	for _, f := range vlanOffloadFeatures {
 		st, ok := feats[f]
@@ -35,7 +35,26 @@ func disableVLANOffload(ifName string) (stillOn []string, err error) {
 		}
 		if err := e.Change(ifName, map[string]bool{f: false}); err != nil {
 			stillOn = append(stillOn, f)
+			continue
 		}
+		turnedOff = append(turnedOff, f)
 	}
-	return stillOn, nil
+	return turnedOff, stillOn, nil
+}
+
+// enableFeatures turns features back on (teardown).
+func enableFeatures(ifName string, feats []string) error {
+	if len(feats) == 0 {
+		return nil
+	}
+	e, err := ethtool.NewEthtool()
+	if err != nil {
+		return err
+	}
+	defer e.Close()
+	cfg := map[string]bool{}
+	for _, f := range feats {
+		cfg[f] = true
+	}
+	return e.Change(ifName, cfg)
 }

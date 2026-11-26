@@ -46,6 +46,7 @@ type options struct {
 	uplink, bpffs, socket, stateFile, xdpMode, probeAddr, logLevel, logFormat string
 	installSrc, installDest                                                   string
 	nodeName                                                                  string
+	force                                                                     bool
 	k8sWatch                                                                  bool
 	k8sGrace                                                                  time.Duration
 	forceXDP                                                                  bool
@@ -71,6 +72,7 @@ func parseFlags(fs *flag.FlagSet, args []string) (*options, error) {
 	fs.BoolVar(&o.k8sWatch, "k8s-watch", os.Getenv("XDPL2_K8S_WATCH") == "true", "cross-check registrations against pods on this node via the Kubernetes API (needs a ServiceAccount token) [XDPL2_K8S_WATCH]")
 	fs.StringVar(&o.nodeName, "node-name", envOr("XDPL2_NODE_NAME", ""), "this node's Kubernetes name, for --k8s-watch [XDPL2_NODE_NAME]")
 	fs.DurationVar(&o.k8sGrace, "k8s-grace", time.Minute, "how long a pod may run without its port (or a port exist without its pod) before it is reported")
+	fs.BoolVar(&o.force, "force", false, "teardown: proceed even if a daemon answers on --socket")
 	fs.StringVar(&o.installSrc, "src", "/usr/local/bin/xdpl2-cni", "install-cni: plugin binary to copy")
 	fs.StringVar(&o.installDest, "dest", "/host/opt/cni/bin", "install-cni: CNI bin directory")
 	fs.DurationVar(&o.reconcile, "reconcile-interval", 10*time.Second, "reconciliation interval")
@@ -133,13 +135,43 @@ func printJSON(f func(*api.Client) (any, error), o *options) error {
 	return enc.Encode(v)
 }
 
+// restoreFile is where the uplink's pre-xdpl2 settings are recorded.
+func restoreFile(o *options) string {
+	if o.stateFile == "" {
+		return ""
+	}
+	return filepath.Join(filepath.Dir(o.stateFile), "uplink-restore.json")
+}
+
+// teardown removes the data path from the node. Stopping the daemon does
+// not (by design, so that restarts are hitless); this does.
 func teardown(o *options) error {
-	if err := datapath.Teardown(o.bpffs); err != nil && !errors.Is(err, os.ErrNotExist) {
+	if !o.force {
+		if _, err := api.NewClient(o.socket, 2*time.Second).Status(); err == nil {
+			return fmt.Errorf("a daemon is serving on %s; stop it first (or pass --force)", o.socket)
+		}
+	}
+	rep, err := datapath.Teardown(o.bpffs, restoreFile(o))
+	if rep != nil {
+		for _, a := range rep.Actions {
+			fmt.Println("teardown:", a)
+		}
+		for _, w := range rep.Warnings {
+			fmt.Fprintln(os.Stderr, "teardown: WARNING:", w)
+		}
+	}
+	if err != nil {
 		return err
 	}
 	if o.stateFile != "" {
-		_ = os.Remove(o.stateFile)
+		if err := os.Remove(o.stateFile); err == nil {
+			fmt.Println("teardown: removed port state", o.stateFile)
+		}
 	}
+	if rep != nil && len(rep.Warnings) > 0 {
+		return errors.New("teardown finished with warnings")
+	}
+	fmt.Println("teardown: done")
 	return nil
 }
 
@@ -221,6 +253,7 @@ func run(o *options) error {
 
 	dp, err := datapath.Open(datapath.Options{
 		Uplink: uplink, PinDir: o.bpffs, Mode: mode, ForceXDP: o.forceXDP, Logger: log,
+		RestoreFile: restoreFile(o),
 	})
 	if err != nil {
 		return err
@@ -257,6 +290,7 @@ func run(o *options) error {
 				"events":       rep.Counters.Events.Load(),
 				"tx_frames":    rep.Counters.TxFrames.Load(),
 				"tx_errors":    rep.Counters.TxErrors.Load(),
+				"tx_port_gone": rep.Counters.TxPortGone.Load(),
 				"parse_errors": rep.Counters.ParseErrors.Load(),
 			}
 		},
