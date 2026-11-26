@@ -10,6 +10,9 @@
 //	xdpl2-daemon status [flags]   print daemon status (JSON)
 //	xdpl2-daemon ports [flags]    list registered ports (JSON)
 //	xdpl2-daemon teardown [flags] detach programs and remove all pins
+//	xdpl2-daemon install-cni --src <file> --dest <dir>
+//	                              copy the CNI plugin binary atomically
+//	                              (used by the DaemonSet init container)
 package main
 
 import (
@@ -18,6 +21,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -39,6 +43,7 @@ import (
 
 type options struct {
 	uplink, bpffs, socket, stateFile, xdpMode, probeAddr, logLevel, logFormat string
+	installSrc, installDest                                                   string
 	forceXDP                                                                  bool
 	reconcile                                                                 time.Duration
 }
@@ -59,6 +64,8 @@ func parseFlags(fs *flag.FlagSet, args []string) (*options, error) {
 	fs.StringVar(&o.xdpMode, "xdp-mode", envOr("XDPL2_XDP_MODE", "auto"), "XDP attach mode: auto, native or generic [XDPL2_XDP_MODE]")
 	fs.BoolVar(&o.forceXDP, "force-xdp", os.Getenv("XDPL2_FORCE_XDP") == "true", "replace a foreign XDP program on the uplink [XDPL2_FORCE_XDP]")
 	fs.StringVar(&o.probeAddr, "probe-addr", envOr("XDPL2_PROBE_ADDR", "127.0.0.1:9967"), "TCP address for /healthz, /livez, /metrics (empty disables) [XDPL2_PROBE_ADDR]")
+	fs.StringVar(&o.installSrc, "src", "/usr/local/bin/xdpl2-cni", "install-cni: plugin binary to copy")
+	fs.StringVar(&o.installDest, "dest", "/host/opt/cni/bin", "install-cni: CNI bin directory")
 	fs.DurationVar(&o.reconcile, "reconcile-interval", 10*time.Second, "reconciliation interval")
 	fs.StringVar(&o.logLevel, "log-level", envOr("XDPL2_LOG_LEVEL", "info"), "debug, info, warn, error [XDPL2_LOG_LEVEL]")
 	fs.StringVar(&o.logFormat, "log-format", envOr("XDPL2_LOG_FORMAT", "json"), "json or text [XDPL2_LOG_FORMAT]")
@@ -96,6 +103,8 @@ func main() {
 		err = printJSON(func(c *api.Client) (any, error) { return c.ListPorts() }, o)
 	case "teardown":
 		err = teardown(o)
+	case "install-cni":
+		err = installCNI(o.installSrc, o.installDest)
 	case "version":
 		fmt.Println(version.Version)
 	default:
@@ -124,6 +133,39 @@ func teardown(o *options) error {
 	if o.stateFile != "" {
 		_ = os.Remove(o.stateFile)
 	}
+	return nil
+}
+
+func installCNI(src, destDir string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	if err := os.MkdirAll(destDir, 0o755); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(destDir, ".xdpl2-cni-")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp.Name())
+	if _, err := io.Copy(tmp, in); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Chmod(0o755); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	// rename(2) is atomic: kubelet never executes a half-written plugin.
+	if err := os.Rename(tmp.Name(), filepath.Join(destDir, "xdpl2")); err != nil {
+		return err
+	}
+	fmt.Println("installed", filepath.Join(destDir, "xdpl2"))
 	return nil
 }
 
