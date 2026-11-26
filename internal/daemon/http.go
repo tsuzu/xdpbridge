@@ -122,6 +122,7 @@ func (s *Server) Metrics() string {
 	fmt.Fprintf(&b, "# HELP xdpl2_healthy 1 if the daemon reports no problems.\n# TYPE xdpl2_healthy gauge\nxdpl2_healthy %d\n", healthy)
 	fmt.Fprintf(&b, "# HELP xdpl2_ports Registered pod ports.\n# TYPE xdpl2_ports gauge\nxdpl2_ports %d\n", st.Ports)
 	fmt.Fprintf(&b, "# HELP xdpl2_unregistered_veths Host veths without a registration (watchdog).\n# TYPE xdpl2_unregistered_veths gauge\nxdpl2_unregistered_veths %d\n", len(st.UnregisteredVeths))
+	fmt.Fprintf(&b, "# HELP xdpl2_ports_netns_not_visible Live ports whose pod netns path the daemon cannot see.\n# TYPE xdpl2_ports_netns_not_visible gauge\nxdpl2_ports_netns_not_visible %d\n", st.NetnsNotVisible)
 	fmt.Fprintf(&b, "# HELP xdpl2_problems Problems reported by /healthz.\n# TYPE xdpl2_problems gauge\nxdpl2_problems %d\n", len(st.Problems))
 	if st.K8s != nil {
 		synced := 0

@@ -97,6 +97,9 @@ type Status struct {
 	// HostVLANs lists the VLANs on which the host stack is a switch port
 	// (0 = the uplink itself; others are 802.1Q subinterfaces).
 	HostVLANs []int `json:"hostVLANs,omitempty"`
+	// NetnsNotVisible counts live ports whose netns path the daemon cannot
+	// see (a deployment problem; the ports are kept).
+	NetnsNotVisible int `json:"netnsNotVisible,omitempty"`
 	// K8s is present when the Kubernetes-API watchdog is enabled.
 	K8s *K8sStatus `json:"k8s,omitempty"`
 }

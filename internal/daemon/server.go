@@ -70,7 +70,7 @@ type Config struct {
 	// FloodRunning and FloodCounters are optional hooks into the replicator.
 	FloodRunning  func() bool
 	FloodCounters func() map[string]uint64
-	// PathExists checks netns paths; defaults to os.Stat.
+	// PathExists checks netns paths; defaults to DefaultPathExists.
 	PathExists func(string) bool
 	// K8s enables the Kubernetes-API cross-check when non-nil.
 	K8s K8sSource
@@ -103,6 +103,9 @@ type Server struct {
 	problems     []string
 	unregistered []string
 	suspects     map[string]int // unregistered veths seen in consecutive passes
+	vethMisses   map[string]int // ports whose host veth was not found, consecutive passes
+	nsInvisible  map[string]bool
+	nsInvisibleN int
 	k8s          *api.K8sStatus
 	hostVLANs    map[uint16]net.HardwareAddr
 	repairs      atomic.Uint64
@@ -121,9 +124,10 @@ func New(cfg Config, dp Dataplane, links Links) *Server {
 		cfg.K8sGrace = time.Minute
 	}
 	if cfg.PathExists == nil {
-		cfg.PathExists = func(p string) bool { _, err := os.Stat(p); return err == nil }
+		cfg.PathExists = DefaultPathExists
 	}
-	s := &Server{cfg: cfg, dp: dp, links: links, log: cfg.Logger, ports: map[string]*api.Port{}, suspects: map[string]int{}}
+	s := &Server{cfg: cfg, dp: dp, links: links, log: cfg.Logger, ports: map[string]*api.Port{},
+		suspects: map[string]int{}, vethMisses: map[string]int{}, nsInvisible: map[string]bool{}}
 	s.floodPorts.Store(&[]flood.Port{})
 	return s
 }
@@ -383,18 +387,47 @@ func (s *Server) Reconcile() {
 		}
 	}
 
+	nsInvisible := 0
 	for key, p := range s.ports {
+		// Liveness is judged by the host-side veth alone. A veth pair dies
+		// with the pod's netns (the kernel deletes the peer, and with it
+		// the host end), so a present host veth means a live pod. The
+		// netns *path* is only informational: it is a path in the
+		// runtime's mount namespace and may simply not be visible here.
 		idx, err := s.links.IndexByName(p.HostIfName)
-		gone := err != nil
-		nsGone := p.Netns != "" && !s.cfg.PathExists(p.Netns)
-		if gone || nsGone {
+		if err != nil {
+			if !errors.Is(err, ErrLinkNotFound) {
+				problems = append(problems, fmt.Sprintf("port %s: cannot look up host veth %s: %v", key, p.HostIfName, err))
+				continue
+			}
+			s.vethMisses[key]++
+			if s.vethMisses[key] < gcMissThreshold {
+				s.log.Warn("host veth of port not found; will garbage-collect if still missing",
+					"key", key, "host_if", p.HostIfName, "misses", s.vethMisses[key])
+				problems = append(problems, fmt.Sprintf("port %s: host veth %s not found", key, p.HostIfName))
+				continue
+			}
 			s.log.Warn("garbage-collecting port whose pod vanished without CNI DEL",
-				"key", key, "host_if", p.HostIfName, "veth_gone", gone, "netns_gone", nsGone)
+				"key", key, "host_if", p.HostIfName, "veth_misses", s.vethMisses[key])
 			_ = s.dp.RemovePort(specOf(p))
 			delete(s.ports, key)
+			delete(s.vethMisses, key)
+			delete(s.nsInvisible, key)
 			s.gcs.Add(1)
 			changed = true
 			continue
+		}
+		delete(s.vethMisses, key)
+		if p.Netns != "" && !s.cfg.PathExists(p.Netns) {
+			nsInvisible++
+			if !s.nsInvisible[key] {
+				s.nsInvisible[key] = true
+				s.log.Error("netns path of a live port is not visible to the daemon; the port is kept "+
+					"(its host veth is alive). Mount the host's /run/netns into the daemon so this check works",
+					"key", key, "netns", p.Netns, "host_if", p.HostIfName)
+			}
+		} else {
+			delete(s.nsInvisible, key)
 		}
 		want := specOf(p)
 		if idx != p.HostIfindex {
@@ -420,6 +453,22 @@ func (s *Server) Reconcile() {
 		}
 		p.Health = "ok"
 		byID[p.ID] = p
+	}
+
+	if nsInvisible > 0 {
+		problems = append(problems, fmt.Sprintf("%d live port(s) whose pod netns path is not visible in the daemon's "+
+			"mount namespace (mount the host /run/netns; ports are kept)", nsInvisible))
+	}
+	s.nsInvisibleN = nsInvisible
+	for k := range s.vethMisses {
+		if _, ok := s.ports[k]; !ok {
+			delete(s.vethMisses, k)
+		}
+	}
+	for k := range s.nsInvisible {
+		if _, ok := s.ports[k]; !ok {
+			delete(s.nsInvisible, k)
+		}
 	}
 
 	// Host port.
@@ -584,6 +633,28 @@ func (s *Server) checkPortLocked(want datapath.PortSpec, fdb map[string]uint32) 
 	return ""
 }
 
+// gcMissThreshold is how many consecutive reconcile passes a port's host
+// veth must be missing before the port is garbage-collected.
+const gcMissThreshold = 2
+
+// DefaultPathExists stats a netns path. Runtimes report paths under either
+// /var/run/netns or /run/netns (one is usually a symlink to the other on
+// the host, but not necessarily inside the daemon's container), so both
+// spellings are tried.
+func DefaultPathExists(p string) bool {
+	if _, err := os.Stat(p); err == nil {
+		return true
+	}
+	for _, pair := range [][2]string{{"/var/run/", "/run/"}, {"/run/", "/var/run/"}} {
+		if strings.HasPrefix(p, pair[0]) {
+			if _, err := os.Stat(pair[1] + strings.TrimPrefix(p, pair[0])); err == nil {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // RunReconciler calls Reconcile every interval until stop is closed.
 func (s *Server) RunReconciler(interval time.Duration, stop <-chan struct{}) {
 	t := time.NewTicker(interval)
@@ -607,6 +678,7 @@ func (s *Server) Status() api.Status {
 		Ports:             len(s.ports),
 		Problems:          append([]string(nil), s.problems...),
 		UnregisteredVeths: append([]string(nil), s.unregistered...),
+		NetnsNotVisible:   s.nsInvisibleN,
 	}
 	if s.k8s != nil {
 		k := *s.k8s

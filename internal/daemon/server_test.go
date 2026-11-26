@@ -384,6 +384,11 @@ func TestReconcileRepairsAndGC(t *testing.T) {
 	h.links.set("xlbbb", 0)
 
 	h.srv.Reconcile()
+	// One miss is not enough to garbage-collect.
+	if _, ok := h.srv.GetPort(api.PortKey("c2", "eth1")); !ok {
+		t.Fatal("port garbage-collected after a single missing-veth pass")
+	}
+	h.srv.Reconcile()
 
 	if n := h.srv.repairs.Load(); n == 0 {
 		t.Error("drift not repaired")
@@ -524,5 +529,61 @@ func TestHostVLANSyncAndConflict(t *testing.T) {
 	}
 	if _, err := h.client.AddPort(req("c1", "xlaaa", sub.String(), 200)); err != nil {
 		t.Errorf("same MAC on another VLAN should be allowed: %v", err)
+	}
+}
+
+// Regression (phase 2b, real cluster): the daemon could not see the CRI's
+// netns paths (no /run/netns mount) and garbage-collected a live port 1.5 s
+// after registration, leaving a Running pod with a dead interface. A
+// missing netns path must never cause GC while the host veth is alive; it
+// must surface as a problem instead.
+func TestNetnsPathInvisibleDoesNotGC(t *testing.T) {
+	dir := t.TempDir()
+	dp := newFakeDP()
+	links := &fakeLinks{links: map[string]int{"xlaaa": 10}}
+	srv := New(Config{Uplink: "uplink0", StateFile: filepath.Join(dir, "s.json"),
+		Logger:     slog.New(slog.NewTextHandler(io.Discard, nil)),
+		PathExists: func(string) bool { return false }}, dp, links)
+	if _, err := srv.AddPort(req("c1", "xlaaa", "02:00:00:00:00:0a", 0)); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 5; i++ {
+		srv.Reconcile()
+	}
+	if _, ok := srv.GetPort(api.PortKey("c1", "eth1")); !ok {
+		t.Fatal("live port garbage-collected because its netns path was not visible")
+	}
+	if id, err := dp.LookupIfindex(10); err != nil || id != 1 {
+		t.Fatal("live port removed from the data path")
+	}
+	st := srv.Status()
+	if st.Healthy || st.NetnsNotVisible != 1 || !contains(st.Problems, "netns path is not visible") {
+		t.Errorf("expected a loud problem, got %+v", st)
+	}
+	if !strings.Contains(srv.Metrics(), "xdpl2_ports_netns_not_visible 1") {
+		t.Error("metric missing")
+	}
+	if !st.Ready {
+		t.Error("must not block CNI ADD")
+	}
+	// The veth really goes away: GC after the miss threshold.
+	links.set("xlaaa", 0)
+	srv.Reconcile()
+	srv.Reconcile()
+	if _, ok := srv.GetPort(api.PortKey("c1", "eth1")); ok {
+		t.Error("port with a vanished veth not garbage-collected")
+	}
+	if st := srv.Status(); st.NetnsNotVisible != 0 {
+		t.Error("stale netns-invisible count")
+	}
+}
+
+func TestDefaultPathExistsRunAliases(t *testing.T) {
+	// /proc/self exists under neither prefix; just exercise the fallbacks.
+	if DefaultPathExists("/var/run/xdpl2-definitely-missing") || DefaultPathExists("/run/xdpl2-definitely-missing") {
+		t.Error("missing paths reported as present")
+	}
+	if !DefaultPathExists("/proc/self") {
+		t.Error("existing path reported missing")
 	}
 }
