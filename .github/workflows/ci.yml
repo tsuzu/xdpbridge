@@ -1,0 +1,91 @@
+# SPDX-License-Identifier: Apache-2.0
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  GOTOOLCHAIN: local
+  DEBIAN_FRONTEND: noninteractive
+
+jobs:
+  build:
+    name: Build, vet, unit tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Install BPF toolchain
+        run: sudo apt-get update && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends clang llvm libbpf-dev
+      - name: Hygiene (SPDX headers, no environment data)
+        run: hack/check-hygiene.sh
+      - name: Generate BPF bindings (clang + bpf2go)
+        run: make generate
+      - name: gofmt
+        run: make fmt-check
+      - name: go vet
+        run: make vet
+      - name: Unit tests
+        run: make unit
+      - name: Build binaries
+        run: make build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bin
+          path: bin/
+
+  manifests:
+    name: Manifest lint
+    runs-on: ubuntu-24.04
+    env:
+      KUBECONFORM_VERSION: v0.6.7
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Offline manifest checks
+        run: go test ./deploy/
+      - name: kubeconform (schema validation; CRDs such as NetworkAttachmentDefinition are skipped)
+        run: |
+          curl -fsSL -o /tmp/kc.tgz \
+            "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz"
+          tar -xzf /tmp/kc.tgz -C /tmp kubeconform
+          /tmp/kubeconform -strict -summary -ignore-missing-schemas deploy/*.yaml deploy/examples/*.yaml
+
+  integration:
+    name: netns integration test (privileged)
+    # GitHub-hosted Ubuntu runners give passwordless sudo and a >= 6.8 kernel,
+    # which is enough for network namespaces, XDP (native on veth + generic)
+    # and TCX. The test never touches the runner's own interfaces.
+    runs-on: ubuntu-24.04
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Install toolchain and test tools
+        run: |
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends clang llvm libbpf-dev \
+            iproute2 iputils-ping tcpdump iperf3 ethtool python3
+      - name: Build
+        run: make build
+      - name: Kernel info
+        run: uname -a && (mount | grep bpf || true)
+      - name: Run netns integration test (native + generic XDP)
+        run: sudo test/netns_test.sh --mode both --testlog "$RUNNER_TEMP/TESTLOG.md"
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: testlog
+          path: ${{ runner.temp }}/TESTLOG.md
+          if-no-files-found: ignore
