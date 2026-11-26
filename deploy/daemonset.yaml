@@ -123,6 +123,17 @@ spec:
               mountPath: /run/xdpl2
             - name: state
               mountPath: /var/lib/xdpl2
+            # Pod network namespaces created by the container runtime. The
+            # reconciler reports ports whose netns path it cannot see, so
+            # it needs the host's view. HostToContainer propagation makes
+            # namespaces created after the daemon started visible too.
+            # Runtimes report /var/run/netns/... or /run/netns/...; on most
+            # hosts (Talos included) /var/run is a symlink to /run, and the
+            # daemon checks both spellings, so mounting /run/netns suffices.
+            - name: netns
+              mountPath: /run/netns
+              mountPropagation: HostToContainer
+              readOnly: true
       volumes:
         - name: bpffs
           hostPath:
@@ -139,4 +150,10 @@ spec:
         - name: cni-bin
           hostPath:
             path: /opt/cni/bin
+            type: DirectoryOrCreate
+        # If your host keeps netns under /var/run/netns and /var/run is NOT
+        # a symlink to /run, point this at /var/run/netns instead.
+        - name: netns
+          hostPath:
+            path: /run/netns
             type: DirectoryOrCreate

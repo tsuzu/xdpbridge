@@ -212,3 +212,63 @@ func TestNoEnvironmentData(t *testing.T) {
 		}
 	}
 }
+
+// TestDaemonSetMountsNetns guards the phase-2b regression: without the
+// host's /run/netns the daemon cannot see pod netns paths.
+func TestDaemonSetMountsNetns(t *testing.T) {
+	b, err := os.ReadFile("daemonset.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ds struct {
+		Kind string
+		Spec struct {
+			Template struct {
+				Spec struct {
+					Containers []struct {
+						Name         string
+						VolumeMounts []struct {
+							Name             string `yaml:"name"`
+							MountPath        string `yaml:"mountPath"`
+							MountPropagation string `yaml:"mountPropagation"`
+						} `yaml:"volumeMounts"`
+					}
+					Volumes []struct {
+						Name     string
+						HostPath *struct{ Path string } `yaml:"hostPath"`
+					}
+				}
+			}
+		}
+	}
+	dec := yaml.NewDecoder(bytes.NewReader(b))
+	for {
+		ds.Kind = ""
+		if err := dec.Decode(&ds); err != nil {
+			t.Fatal("no DaemonSet in daemonset.yaml")
+		}
+		if ds.Kind == "DaemonSet" {
+			break
+		}
+	}
+	vol := ""
+	for _, v := range ds.Spec.Template.Spec.Volumes {
+		if v.HostPath != nil && strings.TrimSuffix(v.HostPath.Path, "/") == "/run/netns" {
+			vol = v.Name
+		}
+	}
+	if vol == "" {
+		t.Fatal("no hostPath volume for /run/netns")
+	}
+	for _, c := range ds.Spec.Template.Spec.Containers {
+		if c.Name != "daemon" {
+			continue
+		}
+		for _, m := range c.VolumeMounts {
+			if m.Name == vol && m.MountPath == "/run/netns" && m.MountPropagation == "HostToContainer" {
+				return
+			}
+		}
+	}
+	t.Error("daemon container must mount the host /run/netns at /run/netns with HostToContainer propagation")
+}
