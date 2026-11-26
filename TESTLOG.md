@@ -112,8 +112,25 @@ Setup:
 * **Regression tests:** `TestNetnsPathInvisibleDoesNotGC`,
   `TestDaemonSetMountsNetns`, and netns test r.8, which runs the real
   daemon with `/run/netns` hidden.
-* **Not yet re-validated:** the fix still needs a run on the cluster
-  *without* the manual bind mount, using the updated DaemonSet.
+
+### Re-validation of the GC fix (binaries from 3661cbb, negative configuration)
+
+The daemon was deliberately run **without** the `/run/netns` mount, the
+exact condition that triggered the bug.
+
+| Check | Result |
+|---|---|
+| Live Multus port survives indefinitely (GC count 0 across many reconcile passes) | PASS |
+| Status `healthy=false` with the "netns path not visible … ports are kept" problem | PASS |
+| `/healthz` returns 503 | PASS |
+| Pod → LAN gateway and pod → LAN host while in that state: 3/3 each | PASS |
+| Pod deletion unregisters the port cleanly | PASS |
+| Teardown restores the node baseline | PASS |
+
+The positive configuration (netns visible) was validated in the 2b run with
+the operator's bind mount, which gives the daemon the same view as the
+DaemonSet's `/run/netns` hostPath mount. The DaemonSet manifest itself
+has not yet been applied on the cluster.
 
 ## Phase 1 summary
 
