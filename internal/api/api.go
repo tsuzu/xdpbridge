@@ -90,6 +90,25 @@ type Status struct {
 	Counters map[string]uint64 `json:"counters"`
 	// UnregisteredVeths lists host veths with our prefix but no registration.
 	UnregisteredVeths []string `json:"unregisteredVeths,omitempty"`
+	// K8s is present when the Kubernetes-API watchdog is enabled.
+	K8s *K8sStatus `json:"k8s,omitempty"`
+}
+
+// K8sStatus reports the Kubernetes-API cross-check.
+type K8sStatus struct {
+	Node string `json:"node"`
+	// Synced is true once pods and NADs have been listed.
+	Synced bool `json:"synced"`
+	// XDPL2NADs is the number of NetworkAttachmentDefinitions using xdpl2.
+	XDPL2NADs int `json:"xdpl2NADs"`
+	// PodsExpected counts live pods on the node with xdpl2 attachments;
+	// PodsChecked those past the start-up grace period.
+	PodsExpected int `json:"podsExpected"`
+	PodsChecked  int `json:"podsChecked"`
+	// MissingPorts: pods that should have an xdpl2 port but do not.
+	MissingPorts []string `json:"missingPorts,omitempty"`
+	// OrphanPorts: registered ports whose pod is not on this node.
+	OrphanPorts []string `json:"orphanPorts,omitempty"`
 }
 
 // Error is the error body.

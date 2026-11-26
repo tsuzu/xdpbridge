@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/xdpl2/xdpl2/internal/api"
 	"github.com/xdpl2/xdpl2/internal/datapath"
+	"github.com/xdpl2/xdpl2/internal/k8swatch"
 )
 
 // fakeDP is an in-memory Dataplane.
@@ -405,5 +407,76 @@ func TestWatchdogAndHealth(t *testing.T) {
 	h.dp.xdp = false
 	if st := h.srv.Status(); st.Ready {
 		t.Error("must not be ready without XDP")
+	}
+}
+
+type fakeK8s struct{ snap k8swatch.Snapshot }
+
+func (f *fakeK8s) Snapshot() k8swatch.Snapshot { return f.snap }
+
+func TestK8sCrossCheckSurfacesInHealthAndMetrics(t *testing.T) {
+	now := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
+	k := &fakeK8s{snap: k8swatch.Snapshot{
+		Synced:   true,
+		LivePods: map[string]bool{"app/web": true, "app/db": true},
+		Expected: []k8swatch.ExpectedPod{
+			{Namespace: "app", Name: "web", Phase: "Running", Since: now.Add(-time.Hour), Attachments: []k8swatch.Attachment{{Namespace: "app", Name: "lan"}}},
+			{Namespace: "app", Name: "db", Phase: "Running", Since: now.Add(-time.Hour), Attachments: []k8swatch.Attachment{{Namespace: "app", Name: "lan"}}},
+		},
+	}}
+	dir := t.TempDir()
+	links := &fakeLinks{links: map[string]int{"xlaaa": 10, "xlbbb": 11}}
+	srv := New(Config{Uplink: "uplink0", StateFile: filepath.Join(dir, "s.json"), Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		PathExists: func(string) bool { return true }, K8s: k, NodeName: "node-a",
+		Now: func() time.Time { return now }}, newFakeDP(), links)
+
+	r := req("c1", "xlaaa", "02:00:00:00:00:0a", 0)
+	r.PodNamespace, r.PodName = "app", "web"
+	if _, err := srv.AddPort(r); err != nil {
+		t.Fatal(err)
+	}
+	r2 := req("c2", "xlbbb", "02:00:00:00:00:0b", 0)
+	r2.PodNamespace, r2.PodName = "app", "gone"
+	if _, err := srv.AddPort(r2); err != nil {
+		t.Fatal(err)
+	}
+	// Ports created "now" are within the grace period; age them.
+	srv.mu.Lock()
+	for _, p := range srv.ports {
+		p.Created = now.Add(-time.Hour)
+	}
+	srv.mu.Unlock()
+
+	srv.Reconcile()
+	st := srv.Status()
+	if st.Healthy || st.K8s == nil {
+		t.Fatalf("expected unhealthy with k8s status: %+v", st)
+	}
+	if len(st.K8s.MissingPorts) != 1 || !strings.Contains(st.K8s.MissingPorts[0], "app/db") {
+		t.Errorf("missing: %q", st.K8s.MissingPorts)
+	}
+	if len(st.K8s.OrphanPorts) != 1 || !strings.Contains(st.K8s.OrphanPorts[0], "app/gone") {
+		t.Errorf("orphans: %q", st.K8s.OrphanPorts)
+	}
+	m := srv.Metrics()
+	for _, want := range []string{"xdpl2_k8s_missing_ports 1", "xdpl2_k8s_orphan_ports 1", "xdpl2_k8s_watch_synced 1", "xdpl2_healthy 0"} {
+		if !strings.Contains(m, want) {
+			t.Errorf("metrics lack %q", want)
+		}
+	}
+	// /healthz must fail loudly, naming the pod.
+	rec := httptest.NewRecorder()
+	srv.ProbeHandler().ServeHTTP(rec, httptest.NewRequest("GET", "/healthz", nil))
+	if rec.Code != 503 || !strings.Contains(rec.Body.String(), "app/db") {
+		t.Errorf("healthz: %d %q", rec.Code, rec.Body.String())
+	}
+	// Ready (data path) is unaffected: new ADDs must keep working.
+	if !st.Ready {
+		t.Error("k8s problems must not block CNI ADD")
+	}
+
+	// Disabled watchdog: no k8s section at all.
+	if New(Config{Uplink: "u"}, newFakeDP(), links).Status().K8s != nil {
+		t.Error("k8s status present while disabled")
 	}
 }

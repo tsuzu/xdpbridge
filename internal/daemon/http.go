@@ -123,6 +123,16 @@ func (s *Server) Metrics() string {
 	fmt.Fprintf(&b, "# HELP xdpl2_ports Registered pod ports.\n# TYPE xdpl2_ports gauge\nxdpl2_ports %d\n", st.Ports)
 	fmt.Fprintf(&b, "# HELP xdpl2_unregistered_veths Host veths without a registration (watchdog).\n# TYPE xdpl2_unregistered_veths gauge\nxdpl2_unregistered_veths %d\n", len(st.UnregisteredVeths))
 	fmt.Fprintf(&b, "# HELP xdpl2_problems Problems reported by /healthz.\n# TYPE xdpl2_problems gauge\nxdpl2_problems %d\n", len(st.Problems))
+	if st.K8s != nil {
+		synced := 0
+		if st.K8s.Synced {
+			synced = 1
+		}
+		fmt.Fprintf(&b, "# HELP xdpl2_k8s_watch_synced 1 if the Kubernetes-API watchdog is synced.\n# TYPE xdpl2_k8s_watch_synced gauge\nxdpl2_k8s_watch_synced %d\n", synced)
+		fmt.Fprintf(&b, "# HELP xdpl2_k8s_pods_expected Live pods on this node with xdpl2 attachments.\n# TYPE xdpl2_k8s_pods_expected gauge\nxdpl2_k8s_pods_expected %d\n", st.K8s.PodsExpected)
+		fmt.Fprintf(&b, "# HELP xdpl2_k8s_missing_ports xdpl2 attachments of running pods without a registered port.\n# TYPE xdpl2_k8s_missing_ports gauge\nxdpl2_k8s_missing_ports %d\n", len(st.K8s.MissingPorts))
+		fmt.Fprintf(&b, "# HELP xdpl2_k8s_orphan_ports Registered ports whose pod is not on this node.\n# TYPE xdpl2_k8s_orphan_ports gauge\nxdpl2_k8s_orphan_ports %d\n", len(st.K8s.OrphanPorts))
+	}
 	keys := make([]string, 0, len(st.Counters))
 	for k := range st.Counters {
 		keys = append(keys, k)

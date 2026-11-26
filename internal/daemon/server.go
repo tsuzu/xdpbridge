@@ -22,6 +22,7 @@ import (
 	"github.com/xdpl2/xdpl2/internal/api"
 	"github.com/xdpl2/xdpl2/internal/datapath"
 	"github.com/xdpl2/xdpl2/internal/flood"
+	"github.com/xdpl2/xdpl2/internal/k8swatch"
 )
 
 // Dataplane is the subset of *datapath.Datapath the server needs; it is an
@@ -62,6 +63,20 @@ type Config struct {
 	FloodCounters func() map[string]uint64
 	// PathExists checks netns paths; defaults to os.Stat.
 	PathExists func(string) bool
+	// K8s enables the Kubernetes-API cross-check when non-nil.
+	K8s K8sSource
+	// NodeName is reported in the k8s status.
+	NodeName string
+	// K8sGrace is how long a pod may run without its port (and a port may
+	// exist without its pod) before it is reported. Default 60s.
+	K8sGrace time.Duration
+	// Now is the clock (tests). Defaults to time.Now.
+	Now func() time.Time
+}
+
+// K8sSource provides the Kubernetes view (implemented by k8swatch.Watcher).
+type K8sSource interface {
+	Snapshot() k8swatch.Snapshot
 }
 
 // Server is the daemon core.
@@ -79,6 +94,7 @@ type Server struct {
 	problems     []string
 	unregistered []string
 	suspects     map[string]int // unregistered veths seen in consecutive passes
+	k8s          *api.K8sStatus
 	repairs      atomic.Uint64
 	gcs          atomic.Uint64
 }
@@ -87,6 +103,12 @@ type Server struct {
 func New(cfg Config, dp Dataplane, links Links) *Server {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
+	}
+	if cfg.Now == nil {
+		cfg.Now = time.Now
+	}
+	if cfg.K8sGrace == 0 {
+		cfg.K8sGrace = time.Minute
 	}
 	if cfg.PathExists == nil {
 		cfg.PathExists = func(p string) bool { _, err := os.Stat(p); return err == nil }
@@ -438,6 +460,10 @@ func (s *Server) Reconcile() {
 		problems = append(problems, "unregistered veth "+n)
 	}
 
+	if s.cfg.K8s != nil {
+		problems = append(problems, s.k8sCheckLocked()...)
+	}
+
 	if !s.dp.XDPAttached() {
 		problems = append(problems, "XDP program not attached to uplink "+s.cfg.Uplink)
 	}
@@ -463,6 +489,35 @@ func fdbSetKey(mac net.HardwareAddr, vlan uint16) string {
 // want that is missing or wrong, or "" if all is in place. fdb is a snapshot
 // of the forwarding database taken at the start of the pass (re-attaching a
 // port to a new ifindex does not change its fdb entry).
+// k8sCheckLocked cross-checks registrations against the pods the API server
+// says are on this node, records the result and returns problems.
+func (s *Server) k8sCheckLocked() []string {
+	snap := s.cfg.K8s.Snapshot()
+	refs := make([]k8swatch.PortRef, 0, len(s.ports))
+	for k, p := range s.ports {
+		refs = append(refs, k8swatch.PortRef{Key: k, PodNamespace: p.PodNamespace, PodName: p.PodName, IfName: p.IfName, Created: p.Created})
+	}
+	res := k8swatch.CrossCheck(snap, refs, s.cfg.Now(), s.cfg.K8sGrace)
+	s.k8s = &api.K8sStatus{
+		Node: s.cfg.NodeName, Synced: snap.Synced, XDPL2NADs: snap.XDPL2NADs,
+		PodsExpected: len(snap.Expected), PodsChecked: res.Checked,
+		MissingPorts: res.MissingPorts, OrphanPorts: res.OrphanPorts,
+	}
+	problems := append([]string(nil), snap.Problems...)
+	if !snap.Synced {
+		problems = append(problems, "k8s watchdog: not synced with the API server yet")
+	}
+	for _, m := range res.MissingPorts {
+		s.log.Error("WATCHDOG(k8s): pod is running without its xdpl2 interface", "detail", m)
+		problems = append(problems, m)
+	}
+	for _, o := range res.OrphanPorts {
+		s.log.Error("WATCHDOG(k8s): registered port has no pod", "detail", o)
+		problems = append(problems, o)
+	}
+	return problems
+}
+
 func (s *Server) checkPortLocked(want datapath.PortSpec, fdb map[string]uint32) string {
 	got, err := s.dp.LookupPort(want.ID)
 	if err != nil || got.Ifindex != want.Ifindex || got.VLAN != want.VLAN || got.Kind != want.Kind || got.MAC.String() != want.MAC.String() {
@@ -503,6 +558,10 @@ func (s *Server) Status() api.Status {
 		Ports:             len(s.ports),
 		Problems:          append([]string(nil), s.problems...),
 		UnregisteredVeths: append([]string(nil), s.unregistered...),
+	}
+	if s.k8s != nil {
+		k := *s.k8s
+		st.K8s = &k
 	}
 	s.mu.Unlock()
 	if !s.dp.XDPAttached() && !contains(st.Problems, "XDP program not attached") {

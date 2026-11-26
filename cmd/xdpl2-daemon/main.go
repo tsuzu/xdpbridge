@@ -38,12 +38,16 @@ import (
 	"github.com/xdpl2/xdpl2/internal/daemon"
 	"github.com/xdpl2/xdpl2/internal/datapath"
 	"github.com/xdpl2/xdpl2/internal/flood"
+	"github.com/xdpl2/xdpl2/internal/k8swatch"
 	"github.com/xdpl2/xdpl2/internal/version"
 )
 
 type options struct {
 	uplink, bpffs, socket, stateFile, xdpMode, probeAddr, logLevel, logFormat string
 	installSrc, installDest                                                   string
+	nodeName                                                                  string
+	k8sWatch                                                                  bool
+	k8sGrace                                                                  time.Duration
 	forceXDP                                                                  bool
 	reconcile                                                                 time.Duration
 }
@@ -64,6 +68,9 @@ func parseFlags(fs *flag.FlagSet, args []string) (*options, error) {
 	fs.StringVar(&o.xdpMode, "xdp-mode", envOr("XDPL2_XDP_MODE", "auto"), "XDP attach mode: auto, native or generic [XDPL2_XDP_MODE]")
 	fs.BoolVar(&o.forceXDP, "force-xdp", os.Getenv("XDPL2_FORCE_XDP") == "true", "replace a foreign XDP program on the uplink [XDPL2_FORCE_XDP]")
 	fs.StringVar(&o.probeAddr, "probe-addr", envOr("XDPL2_PROBE_ADDR", "127.0.0.1:9967"), "TCP address for /healthz, /livez, /metrics (empty disables) [XDPL2_PROBE_ADDR]")
+	fs.BoolVar(&o.k8sWatch, "k8s-watch", os.Getenv("XDPL2_K8S_WATCH") == "true", "cross-check registrations against pods on this node via the Kubernetes API (needs a ServiceAccount token) [XDPL2_K8S_WATCH]")
+	fs.StringVar(&o.nodeName, "node-name", envOr("XDPL2_NODE_NAME", ""), "this node's Kubernetes name, for --k8s-watch [XDPL2_NODE_NAME]")
+	fs.DurationVar(&o.k8sGrace, "k8s-grace", time.Minute, "how long a pod may run without its port (or a port exist without its pod) before it is reported")
 	fs.StringVar(&o.installSrc, "src", "/usr/local/bin/xdpl2-cni", "install-cni: plugin binary to copy")
 	fs.StringVar(&o.installDest, "dest", "/host/opt/cni/bin", "install-cni: CNI bin directory")
 	fs.DurationVar(&o.reconcile, "reconcile-interval", 10*time.Second, "reconciliation interval")
@@ -220,8 +227,24 @@ func run(o *options) error {
 	}
 	defer dp.Close()
 
+	ctx, cancelWatch := context.WithCancel(context.Background())
+	defer cancelWatch()
+	var k8s daemon.K8sSource
+	if o.k8sWatch {
+		w, err := k8swatch.New(k8swatch.Config{NodeName: o.nodeName, PluginType: "xdpl2", Logger: log})
+		if err != nil {
+			return err
+		}
+		go w.Run(ctx)
+		k8s = w
+		log.Info("Kubernetes-API watchdog enabled", "node", o.nodeName)
+	}
+
 	var rep *flood.Replicator
 	srv := daemon.New(daemon.Config{
+		K8s:          k8s,
+		NodeName:     o.nodeName,
+		K8sGrace:     o.k8sGrace,
 		Uplink:       uplink,
 		StateFile:    o.stateFile,
 		Logger:       log,
