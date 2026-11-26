@@ -1,0 +1,3 @@
+bin/
+.git/
+internal/bpfobj/xdpl2_bpfel.*

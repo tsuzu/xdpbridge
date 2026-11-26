@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# A pod with a second interface on the LAN via xdpl2 (static address).
+apiVersion: v1
+kind: Pod
+metadata:
+  name: lan-demo
+  namespace: default
+  annotations:
+    k8s.v1.cni.cncf.io/networks: |
+      [{
+        "name": "lan-static",
+        "interface": "net1",
+        "ips": ["192.0.2.50/24"],
+        "mac": "02:00:00:00:00:50"
+      }]
+spec:
+  nodeSelector:
+    xdpl2/enabled: "true"
+  containers:
+    - name: demo
+      image: busybox:1.36
+      command: ["sleep", "infinity"]
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: ["ALL"]

@@ -9,6 +9,7 @@ require (
 	github.com/safchain/ethtool v0.5.9
 	github.com/vishvananda/netlink v1.3.0
 	golang.org/x/sys v0.30.0
+	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (

@@ -1,0 +1,28 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Multus NetworkAttachmentDefinition using xdpl2 with host-local IPAM.
+# host-local allocates per node: give each node a disjoint range, or use a
+# cluster-wide IPAM (e.g. whereabouts) or static addresses (see
+# nad-static.yaml). Addresses are RFC 5737 documentation examples.
+apiVersion: k8s.cni.cncf.io/v1
+kind: NetworkAttachmentDefinition
+metadata:
+  name: lan
+  namespace: default
+spec:
+  config: |
+    {
+      "cniVersion": "1.0.0",
+      "name": "lan",
+      "type": "xdpl2",
+      "ipam": {
+        "type": "host-local",
+        "ranges": [[{
+          "subnet": "192.0.2.0/24",
+          "rangeStart": "192.0.2.200",
+          "rangeEnd": "192.0.2.220",
+          "gateway": "192.0.2.1"
+        }]],
+        "routes": [{ "dst": "198.51.100.0/24" }]
+      }
+    }

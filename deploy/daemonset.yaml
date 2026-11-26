@@ -1,0 +1,137 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# xdpl2 node daemon + CNI plugin installer.
+#
+# Runs only on nodes labelled xdpl2/enabled=true:
+#   kubectl label node <node> xdpl2/enabled=true
+# Set the uplink in the ConfigMap below (a name, a comma-separated list of
+# candidates where the first existing one wins, or "default-route").
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: xdpl2
+  namespace: xdpl2-system
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: xdpl2-config
+  namespace: xdpl2-system
+data:
+  XDPL2_UPLINK: "eth1"
+  # auto | native | generic
+  XDPL2_XDP_MODE: "auto"
+  XDPL2_LOG_LEVEL: "info"
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: xdpl2
+  namespace: xdpl2-system
+  labels:
+    app.kubernetes.io/name: xdpl2
+    app.kubernetes.io/component: node-daemon
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: xdpl2
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: xdpl2
+        app.kubernetes.io/component: node-daemon
+    spec:
+      serviceAccountName: xdpl2
+      automountServiceAccountToken: false
+      # The daemon owns the uplink XDP hook and must live in the host netns.
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      priorityClassName: system-node-critical
+      terminationGracePeriodSeconds: 10
+      nodeSelector:
+        kubernetes.io/os: linux
+        xdpl2/enabled: "true"
+      tolerations:
+        - operator: Exists
+      initContainers:
+        - name: install-cni
+          image: ghcr.io/xdpl2/xdpl2:v0.1.0
+          command: ["/usr/local/bin/xdpl2-daemon", "install-cni",
+                    "--src", "/usr/local/bin/xdpl2-cni", "--dest", "/host/opt/cni/bin"]
+          securityContext:
+            privileged: false
+            readOnlyRootFilesystem: true
+          volumeMounts:
+            - name: cni-bin
+              mountPath: /host/opt/cni/bin
+      containers:
+        - name: daemon
+          image: ghcr.io/xdpl2/xdpl2:v0.1.0
+          command: ["/usr/local/bin/xdpl2-daemon"]
+          envFrom:
+            - configMapRef:
+                name: xdpl2-config
+          env:
+            - name: XDPL2_BPFFS
+              value: /sys/fs/bpf/xdpl2
+            - name: XDPL2_SOCKET
+              value: /run/xdpl2/xdpl2.sock
+            - name: XDPL2_STATE_FILE
+              value: /var/lib/xdpl2/state.json
+            - name: XDPL2_PROBE_ADDR
+              value: "127.0.0.1:9967"
+          securityContext:
+            # Needs CAP_BPF, CAP_NET_ADMIN, CAP_NET_RAW, CAP_SYS_ADMIN
+            # (bpffs, netlink XDP/TCX attach, AF_PACKET).
+            privileged: true
+            readOnlyRootFilesystem: true
+          readinessProbe:
+            httpGet:
+              host: 127.0.0.1
+              port: 9967
+              path: /healthz
+            periodSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              host: 127.0.0.1
+              port: 9967
+              path: /livez
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 20m
+              memory: 32Mi
+            limits:
+              memory: 256Mi
+          volumeMounts:
+            - name: bpffs
+              mountPath: /sys/fs/bpf
+              mountPropagation: HostToContainer
+            - name: run
+              mountPath: /run/xdpl2
+            - name: state
+              mountPath: /var/lib/xdpl2
+      volumes:
+        - name: bpffs
+          hostPath:
+            path: /sys/fs/bpf
+            type: Directory
+        - name: run
+          hostPath:
+            path: /run/xdpl2
+            type: DirectoryOrCreate
+        - name: state
+          hostPath:
+            path: /var/lib/xdpl2
+            type: DirectoryOrCreate
+        - name: cni-bin
+          hostPath:
+            path: /opt/cni/bin
+            type: DirectoryOrCreate
