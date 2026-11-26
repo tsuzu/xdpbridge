@@ -42,6 +42,11 @@ for t in ip tcpdump iperf3 python3 nsenter; do
 done
 
 P=xlt-                       # namespace prefix
+# A working bpftool (the distro wrapper refuses to run on foreign kernels).
+BPFTOOL=
+for b in ${BPFTOOL_BIN:-} bpftool /usr/lib/linux-tools/*/bpftool /usr/sbin/bpftool; do
+	if [ -x "$(command -v "$b" 2>/dev/null)" ] && "$b" version >/dev/null 2>&1; then BPFTOOL=$(command -v "$b"); break; fi
+done
 UDP="python3 $ROOT/test/udp.py"
 PASS=0 FAIL=0
 RESULTS=()
@@ -500,6 +505,33 @@ run_suite() {
 
 	log "final daemon status:"
 	node "$BIN/xdpl2-daemon" status --socket "$SOCK" | sed 's/^/    /'
+
+	# Teardown: stopping the daemon leaves the pinned data path in place
+	# (hitless restarts); `xdpl2-daemon teardown` removes it.
+	local PORTIF
+	PORTIF=$(python3 -c "import json; print(json.load(open('$WORK/pod2.json'))['interfaces'][0]['name'])")
+	td() { node "$BIN/xdpl2-daemon" teardown --bpffs "$WORK/bpffs/xdpl2" --socket "$SOCK" --state-file "$WORK/state.json" "$@"; }
+	check t.1 "teardown refuses while the daemon is serving" eval "! td"
+	teardown_ok() {
+		stop_daemon
+		ns node ip -d link show uplink0 | grep -q "prog/xdp" || { echo "precondition: XDP should still be attached after daemon stop"; return 1; }
+		td || return 1
+		if ns node ip -d link show uplink0 | grep -q "prog/xdp"; then echo "XDP still attached"; return 1; fi
+		if ns node ip link show uplink0 | grep -q PROMISC; then echo "promiscuous mode not restored"; return 1; fi
+		[ ! -e "$WORK/bpffs/xdpl2" ] || { echo "pins left:"; ls -R "$WORK/bpffs/xdpl2"; return 1; }
+		[ ! -e "$WORK/state.json" ] || { echo "state file left"; return 1; }
+		if [ -n "$BPFTOOL" ]; then
+			local tcx
+			tcx=$(node "$BPFTOOL" net show 2>/dev/null | grep -E "tcx/" || true)
+			[ -z "$tcx" ] || { echo "TCX programs left: $tcx"; return 1; }
+			echo "bpftool: no TCX programs left on uplink0 or $PORTIF"
+		else
+			echo "bpftool unavailable: TCX detach verified via pins only"
+		fi
+	}
+	check t.2 "teardown detaches XDP/TCX, removes pins and state, restores promiscuous mode" teardown_ok
+	check t.3 "teardown is idempotent" td
+	check t.4 "unicast stops after teardown (data path really gone)" eval "! ns pod1 ping -c 1 -W 1 $IP2 >/dev/null"
 	cleanup
 }
 
