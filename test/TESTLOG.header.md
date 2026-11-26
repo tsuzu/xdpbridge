@@ -7,8 +7,9 @@
 > to `xdpbridge` before publication. Results recorded before the rename
 > (phases 1, 2 and 2b, including the cluster runs) are shown with the
 > current names for binaries, paths, the CNI type, env vars and metrics;
-> the runs themselves used the `xdpl2` spellings. Commit hashes cited
-> below predate the rename.
+> the runs themselves used the `xdpl2` spellings, and host veths then used
+> the `xl` prefix (now `xb`). Commit hashes cited below predate the
+> rename.
 
 ## Phase 2: code-side work (workstream B)
 

@@ -30,8 +30,8 @@ flowchart LR
     NIC["uplink NIC<br/>XDP: xdp_uplink<br/>TCX egress: tc_uplink_egress<br/>(+ Cilium TCX programs)"]
     HOST[host stack<br/>= port 0]
     D[xdpbridge-daemon<br/>flood replicator]
-    V1["xl… veth<br/>TCX ingress: tc_port_ingress"]
-    V2["xl… veth<br/>TCX ingress: tc_port_ingress"]
+    V1["xb… veth<br/>TCX ingress: tc_port_ingress"]
+    V2["xb… veth<br/>TCX ingress: tc_port_ingress"]
     NIC -- XDP_PASS --> HOST
     HOST -- egress --> NIC
   end
@@ -42,7 +42,7 @@ flowchart LR
 ```
 
 Every pod attachment is a veth pair. The pod end lives in the pod. The host
-end (named `xl` + 11 hex chars of a hash of container id + interface name)
+end (named `xb` + 11 hex chars of a hash of container id + interface name)
 is a switch *port*. The host network stack is port 0, which is reached
 through the uplink device itself.
 
@@ -271,7 +271,7 @@ Frames larger than 2048 bytes are not replicated (counter `flood_too_big`).
     host's `/run/netns` mount. Paths are checked under both `/var/run/` and
     `/run/`. (Before phase 2b a missing path triggered GC; see section 8.)
   * **orphans**: deletes map entries that no registered port owns,
-  * **watchdog**: a host veth with the `xl` prefix that has no registration
+  * **watchdog**: a host veth with the `xb` prefix that has no registration
     on two consecutive passes is logged as `WATCHDOG: … no working xdpbridge
     interface`. It also makes `/healthz` fail and is exported as
     `xdpbridge_unregistered_veths`,

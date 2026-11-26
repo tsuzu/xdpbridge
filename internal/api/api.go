@@ -22,7 +22,7 @@ const DefaultSocket = "/run/xdpbridge/xdpbridge.sock"
 
 // HostIfPrefix prefixes every host-side veth created by the CNI plugin. The
 // daemon uses it to detect veths that exist without a registration.
-const HostIfPrefix = "xl"
+const HostIfPrefix = "xb"
 
 // PortRequest registers a pod port.
 type PortRequest struct {

@@ -32,8 +32,8 @@ flowchart LR
     NIC["uplink NIC<br/>XDP xdp_uplink<br/>TCX egress tc_uplink_egress"]
     HOST[host stack<br/>port 0]
     DAEMON[xdpbridge-daemon<br/>API · reconciler · flood replicator]
-    VA["veth xl…<br/>TCX ingress tc_port_ingress"]
-    VB["veth xl…<br/>TCX ingress tc_port_ingress"]
+    VA["veth xb…<br/>TCX ingress tc_port_ingress"]
+    VB["veth xb…<br/>TCX ingress tc_port_ingress"]
     NIC -- "not for a pod: XDP_PASS" --> HOST
     NIC -- "dst = pod MAC: redirect" --> VA
     VA -- "dst = host: redirect ingress" --> HOST
@@ -291,10 +291,10 @@ topology from network namespaces:
 ext (LAN host, 192.0.2.100; VLAN 100: 198.51.100.100)
  └─ ext0 ═══ uplink0  (stands in for the physical NIC)
              node ns: 192.0.2.1, xdpbridge-daemon, CNI plugin
-              ├─ xl… ═══ eth1  pod1 ┐
-              ├─ xl… ═══ eth1  pod2 ├ untagged, host-local 192.0.2.10-19
-              ├─ xl… ═══ eth1  pod3 ┘
-              └─ xl… ═══ eth1  pod4   VLAN 100
+              ├─ xb… ═══ eth1  pod1 ┐
+              ├─ xb… ═══ eth1  pod2 ├ untagged, host-local 192.0.2.10-19
+              ├─ xb… ═══ eth1  pod3 ┘
+              └─ xb… ═══ eth1  pod4   VLAN 100
 ```
 
 The test checks pod↔LAN, pod↔pod, pod↔host, ARP in every direction,

@@ -209,7 +209,7 @@ type harness struct {
 func newHarness(t *testing.T) *harness {
 	t.Helper()
 	dir := t.TempDir()
-	h := &harness{t: t, dp: newFakeDP(), links: &fakeLinks{links: map[string]int{"xlaaa": 10, "xlbbb": 11, "xlccc": 12}}, state: filepath.Join(dir, "state.json")}
+	h := &harness{t: t, dp: newFakeDP(), links: &fakeLinks{links: map[string]int{"xbaaa": 10, "xbbbb": 11, "xbccc": 12}}, state: filepath.Join(dir, "state.json")}
 	h.start(dir)
 	return h
 }
@@ -237,7 +237,7 @@ func req(cid, hostIf, mac string, vlan uint16) api.PortRequest {
 
 func TestAddGetListDelete(t *testing.T) {
 	h := newHarness(t)
-	p, err := h.client.AddPort(req("c1", "xlaaa", "02:00:00:00:00:0a", 0))
+	p, err := h.client.AddPort(req("c1", "xbaaa", "02:00:00:00:00:0a", 0))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -247,7 +247,7 @@ func TestAddGetListDelete(t *testing.T) {
 	if id, _ := h.dp.LookupIfindex(10); id != 1 {
 		t.Error("data path not programmed")
 	}
-	p2, err := h.client.AddPort(req("c2", "xlbbb", "02:00:00:00:00:0b", 0))
+	p2, err := h.client.AddPort(req("c2", "xbbbb", "02:00:00:00:00:0b", 0))
 	if err != nil || p2.ID != 2 {
 		t.Fatalf("second port: %+v %v", p2, err)
 	}
@@ -272,7 +272,7 @@ func TestAddGetListDelete(t *testing.T) {
 		t.Errorf("deleting a missing port must succeed (idempotent DEL): %v", err)
 	}
 	// Freed ids are reused.
-	p3, err := h.client.AddPort(req("c3", "xlaaa", "02:00:00:00:00:0c", 0))
+	p3, err := h.client.AddPort(req("c3", "xbaaa", "02:00:00:00:00:0c", 0))
 	if err != nil || p3.ID != 1 {
 		t.Fatalf("id reuse: %+v %v", p3, err)
 	}
@@ -280,16 +280,16 @@ func TestAddGetListDelete(t *testing.T) {
 
 func TestAddIdempotentAndUpdate(t *testing.T) {
 	h := newHarness(t)
-	a, err := h.client.AddPort(req("c1", "xlaaa", "02:00:00:00:00:0a", 0))
+	a, err := h.client.AddPort(req("c1", "xbaaa", "02:00:00:00:00:0a", 0))
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := h.client.AddPort(req("c1", "xlaaa", "02:00:00:00:00:0a", 0))
+	b, err := h.client.AddPort(req("c1", "xbaaa", "02:00:00:00:00:0a", 0))
 	if err != nil || b.ID != a.ID {
 		t.Fatalf("repeat ADD: %+v %v", b, err)
 	}
 	// Same key, new MAC: old fdb entry must go.
-	if _, err := h.client.AddPort(req("c1", "xlaaa", "02:00:00:00:00:0f", 0)); err != nil {
+	if _, err := h.client.AddPort(req("c1", "xbaaa", "02:00:00:00:00:0f", 0)); err != nil {
 		t.Fatal(err)
 	}
 	fdb, _ := h.dp.FDB()
@@ -300,7 +300,7 @@ func TestAddIdempotentAndUpdate(t *testing.T) {
 
 func TestAddValidationAndConflicts(t *testing.T) {
 	h := newHarness(t)
-	if _, err := h.client.AddPort(req("c1", "xlaaa", "02:00:00:00:00:0a", 0)); err != nil {
+	if _, err := h.client.AddPort(req("c1", "xbaaa", "02:00:00:00:00:0a", 0)); err != nil {
 		t.Fatal(err)
 	}
 	cases := []struct {
@@ -308,14 +308,14 @@ func TestAddValidationAndConflicts(t *testing.T) {
 		r    api.PortRequest
 		code int
 	}{
-		{"bad mac", req("c2", "xlbbb", "nope", 0), 400},
-		{"multicast mac", req("c2", "xlbbb", "01:00:5e:00:00:01", 0), 400},
-		{"missing veth", req("c2", "xlzzz", "02:00:00:00:00:0b", 0), 400},
+		{"bad mac", req("c2", "xbbbb", "nope", 0), 400},
+		{"multicast mac", req("c2", "xbbbb", "01:00:5e:00:00:01", 0), 400},
+		{"missing veth", req("c2", "xbzzz", "02:00:00:00:00:0b", 0), 400},
 		{"wrong prefix", req("c2", "eth0", "02:00:00:00:00:0b", 0), 400},
-		{"vlan range", req("c2", "xlbbb", "02:00:00:00:00:0b", 4095), 400},
-		{"dup mac", req("c2", "xlbbb", "02:00:00:00:00:0a", 0), 409},
-		{"dup veth", req("c2", "xlaaa", "02:00:00:00:00:0b", 0), 409},
-		{"host mac", req("c2", "xlbbb", "02:00:00:00:01:01", 0), 409},
+		{"vlan range", req("c2", "xbbbb", "02:00:00:00:00:0b", 4095), 400},
+		{"dup mac", req("c2", "xbbbb", "02:00:00:00:00:0a", 0), 409},
+		{"dup veth", req("c2", "xbaaa", "02:00:00:00:00:0b", 0), 409},
+		{"host mac", req("c2", "xbbbb", "02:00:00:00:01:01", 0), 409},
 	}
 	for _, c := range cases {
 		_, err := h.client.AddPort(c.r)
@@ -325,7 +325,7 @@ func TestAddValidationAndConflicts(t *testing.T) {
 		}
 	}
 	// Same MAC on a different VLAN is a different station.
-	if _, err := h.client.AddPort(req("c3", "xlbbb", "02:00:00:00:00:0a", 100)); err != nil {
+	if _, err := h.client.AddPort(req("c3", "xbbbb", "02:00:00:00:00:0a", 100)); err != nil {
 		t.Errorf("same MAC on other VLAN: %v", err)
 	}
 }
@@ -333,7 +333,7 @@ func TestAddValidationAndConflicts(t *testing.T) {
 func TestAddFailsWhenDataPathFails(t *testing.T) {
 	h := newHarness(t)
 	h.dp.failSet = true
-	if _, err := h.client.AddPort(req("c1", "xlaaa", "02:00:00:00:00:0a", 0)); err == nil {
+	if _, err := h.client.AddPort(req("c1", "xbaaa", "02:00:00:00:00:0a", 0)); err == nil {
 		t.Fatal("ADD must fail when the data path cannot be programmed")
 	}
 	if len(h.srv.ListPorts()) != 0 {
@@ -343,15 +343,15 @@ func TestAddFailsWhenDataPathFails(t *testing.T) {
 
 func TestPersistenceAndRestore(t *testing.T) {
 	h := newHarness(t)
-	for i, n := range []string{"xlaaa", "xlbbb", "xlccc"} {
+	for i, n := range []string{"xbaaa", "xbbbb", "xbccc"} {
 		if _, err := h.client.AddPort(req("c"+n, n, "02:00:00:00:00:0"+string(rune('1'+i)), 0)); err != nil {
 			t.Fatal(err)
 		}
 	}
 	// Restart with a fresh data path: one veth vanished, one was recreated.
 	h.dp = newFakeDP()
-	h.links.set("xlbbb", 0)
-	h.links.set("xlccc", 99)
+	h.links.set("xbbbb", 0)
+	h.links.set("xbccc", 99)
 	h.start(t.TempDir())
 	ports := h.srv.ListPorts()
 	if len(ports) != 2 {
@@ -367,10 +367,10 @@ func TestPersistenceAndRestore(t *testing.T) {
 
 func TestReconcileRepairsAndGC(t *testing.T) {
 	h := newHarness(t)
-	if _, err := h.client.AddPort(req("c1", "xlaaa", "02:00:00:00:00:0a", 0)); err != nil {
+	if _, err := h.client.AddPort(req("c1", "xbaaa", "02:00:00:00:00:0a", 0)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := h.client.AddPort(req("c2", "xlbbb", "02:00:00:00:00:0b", 0)); err != nil {
+	if _, err := h.client.AddPort(req("c2", "xbbbb", "02:00:00:00:00:0b", 0)); err != nil {
 		t.Fatal(err)
 	}
 	// Drift: someone deleted a map entry and the TCX link.
@@ -381,7 +381,7 @@ func TestReconcileRepairsAndGC(t *testing.T) {
 	// Orphan: an fdb entry nobody owns.
 	_ = h.dp.SetPort(datapath.PortSpec{ID: 77, Ifindex: 77, MAC: net.HardwareAddr{2, 0, 0, 0, 0, 0x77}, Kind: datapath.KindPod}, nil)
 	// GC: c2's veth disappears.
-	h.links.set("xlbbb", 0)
+	h.links.set("xbbbb", 0)
 
 	h.srv.Reconcile()
 	// One miss is not enough to garbage-collect.
@@ -412,10 +412,10 @@ func TestReconcileRepairsAndGC(t *testing.T) {
 
 func TestWatchdogAndHealth(t *testing.T) {
 	h := newHarness(t)
-	if _, err := h.client.AddPort(req("c1", "xlaaa", "02:00:00:00:00:0a", 0)); err != nil {
+	if _, err := h.client.AddPort(req("c1", "xbaaa", "02:00:00:00:00:0a", 0)); err != nil {
 		t.Fatal(err)
 	}
-	h.srv.Reconcile() // xlbbb, xlccc seen once: not yet reported
+	h.srv.Reconcile() // xbbbb, xbccc seen once: not yet reported
 	if st := h.srv.Status(); !st.Healthy {
 		t.Fatalf("first sighting must not be reported: %+v", st.Problems)
 	}
@@ -451,17 +451,17 @@ func TestK8sCrossCheckSurfacesInHealthAndMetrics(t *testing.T) {
 		},
 	}}
 	dir := t.TempDir()
-	links := &fakeLinks{links: map[string]int{"xlaaa": 10, "xlbbb": 11}}
+	links := &fakeLinks{links: map[string]int{"xbaaa": 10, "xbbbb": 11}}
 	srv := New(Config{Uplink: "uplink0", StateFile: filepath.Join(dir, "s.json"), Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 		PathExists: func(string) bool { return true }, K8s: k, NodeName: "node-a",
 		Now: func() time.Time { return now }}, newFakeDP(), links)
 
-	r := req("c1", "xlaaa", "02:00:00:00:00:0a", 0)
+	r := req("c1", "xbaaa", "02:00:00:00:00:0a", 0)
 	r.PodNamespace, r.PodName = "app", "web"
 	if _, err := srv.AddPort(r); err != nil {
 		t.Fatal(err)
 	}
-	r2 := req("c2", "xlbbb", "02:00:00:00:00:0b", 0)
+	r2 := req("c2", "xbbbb", "02:00:00:00:00:0b", 0)
 	r2.PodNamespace, r2.PodName = "app", "gone"
 	if _, err := srv.AddPort(r2); err != nil {
 		t.Fatal(err)
@@ -523,11 +523,11 @@ func TestHostVLANSyncAndConflict(t *testing.T) {
 	if st := h.srv.Status(); fmt.Sprint(st.HostVLANs) != "[0 100]" {
 		t.Errorf("status hostVLANs = %v", st.HostVLANs)
 	}
-	_, err := h.client.AddPort(req("c1", "xlaaa", sub.String(), 100))
+	_, err := h.client.AddPort(req("c1", "xbaaa", sub.String(), 100))
 	if he, ok := err.(*api.HTTPError); !ok || he.Code != 409 {
 		t.Errorf("registering the host subinterface MAC on its VLAN: %v", err)
 	}
-	if _, err := h.client.AddPort(req("c1", "xlaaa", sub.String(), 200)); err != nil {
+	if _, err := h.client.AddPort(req("c1", "xbaaa", sub.String(), 200)); err != nil {
 		t.Errorf("same MAC on another VLAN should be allowed: %v", err)
 	}
 }
@@ -540,11 +540,11 @@ func TestHostVLANSyncAndConflict(t *testing.T) {
 func TestNetnsPathInvisibleDoesNotGC(t *testing.T) {
 	dir := t.TempDir()
 	dp := newFakeDP()
-	links := &fakeLinks{links: map[string]int{"xlaaa": 10}}
+	links := &fakeLinks{links: map[string]int{"xbaaa": 10}}
 	srv := New(Config{Uplink: "uplink0", StateFile: filepath.Join(dir, "s.json"),
 		Logger:     slog.New(slog.NewTextHandler(io.Discard, nil)),
 		PathExists: func(string) bool { return false }}, dp, links)
-	if _, err := srv.AddPort(req("c1", "xlaaa", "02:00:00:00:00:0a", 0)); err != nil {
+	if _, err := srv.AddPort(req("c1", "xbaaa", "02:00:00:00:00:0a", 0)); err != nil {
 		t.Fatal(err)
 	}
 	for i := 0; i < 5; i++ {
@@ -567,7 +567,7 @@ func TestNetnsPathInvisibleDoesNotGC(t *testing.T) {
 		t.Error("must not block CNI ADD")
 	}
 	// The veth really goes away: GC after the miss threshold.
-	links.set("xlaaa", 0)
+	links.set("xbaaa", 0)
 	srv.Reconcile()
 	srv.Reconcile()
 	if _, ok := srv.GetPort(api.PortKey("c1", "eth1")); ok {

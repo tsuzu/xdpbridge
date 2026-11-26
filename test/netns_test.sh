@@ -10,7 +10,7 @@
 #   ext  (192.0.2.100, VLAN 100: 198.51.100.100)   "the LAN"
 #    | ext0 <-> uplink0   (uplink0 stands in for the physical NIC)
 #   node (192.0.2.1)  xdpbridge-daemon, CNI plugin invoked here
-#    | xl<hash> <-> eth1   (created by xdpbridge-cni)
+#    | xb<hash> <-> eth1   (created by xdpbridge-cni)
 #   pod1, pod2, pod3 (untagged, 192.0.2.10-19), pod4 (VLAN 100)
 #
 # Usage: sudo test/netns_test.sh [--mode native|generic|both] [--keep] [--testlog FILE]
@@ -41,7 +41,7 @@ for t in ip tcpdump iperf3 python3 nsenter; do
 	command -v $t >/dev/null || { echo "missing tool: $t" >&2; exit 2; }
 done
 
-P=xlt-                       # namespace prefix
+P=xbt-                       # namespace prefix
 # A working bpftool (the distro wrapper refuses to run on foreign kernels).
 BPFTOOL=
 for b in ${BPFTOOL_BIN:-} bpftool /usr/lib/linux-tools/*/bpftool /usr/sbin/bpftool; do
@@ -166,9 +166,9 @@ run_suite() {
 
 	log "=== suite: XDP mode $MODE (work dir $WORK) ==="
 	for n in ext node pod1 pod2 pod3 pod4 pod5; do ip netns add "$P$n"; ns "$n" ip link set lo up; done
-	ip link add xlt-u type veth peer name xlt-e
-	ip link set xlt-u netns "${P}node" name uplink0
-	ip link set xlt-e netns "${P}ext" name ext0
+	ip link add xbt-u type veth peer name xbt-e
+	ip link set xbt-u netns "${P}node" name uplink0
+	ip link set xbt-e netns "${P}ext" name ext0
 	ns node ip link set uplink0 address 02:00:00:00:01:01 up
 	ns ext ip link set ext0 address 02:00:00:00:01:64 up
 	# Make ext0 behave like a wire: frames it sends carry complete L4
@@ -465,16 +465,16 @@ run_suite() {
 	check r.3 "CNI ADD fails loudly when the daemon is down, leaves no interface" add_without_daemon
 
 	watchdog() {
-		ns node ip link add xlstray00001 type veth peer name xlstray-peer
+		ns node ip link add xbstray00001 type veth peer name xbstray-peer
 		local ok=1
 		for _ in $(seq 40); do
-			if status_field "['unregisteredVeths']" 2>/dev/null | grep -q xlstray00001; then ok=0; break; fi
+			if status_field "['unregisteredVeths']" 2>/dev/null | grep -q xbstray00001; then ok=0; break; fi
 			sleep 0.2
 		done
 		local healthy
 		healthy=$(status_field "['healthy']")
 		grep -q "WATCHDOG" "$WORK/daemon.log" || ok=1
-		ns node ip link del xlstray00001
+		ns node ip link del xbstray00001
 		[ $ok = 0 ] && [ "$healthy" = False ]
 	}
 	check r.4 "watchdog flags a CNI veth without registration (unhealthy + error log)" watchdog
