@@ -500,6 +500,34 @@ run_suite() {
 	}
 	check r.7 "CNI DEL unregisters and removes the interface; repeated DEL succeeds" del
 
+	# hack/validate-node.sh against this node (no Cilium here).
+	validate() { # validate <expect-tcx> [extra env...]
+		node env XDPL2_UPLINK=uplink0 XDPL2_BPFFS="$WORK/bpffs/xdpl2" XDPL2_SOCKET="$SOCK" \
+			XDPL2_PROBE_ADDR=127.0.0.1:1 XDPL2_DAEMON_BIN="$BIN/xdpl2-daemon" BPFTOOL="${BPFTOOL:-false}" \
+			XDPL2_EXPECT_XDP_MODE="$MODE" XDPL2_EXPECT_TCX="$1" "${@:2}" "$ROOT/hack/validate-node.sh"
+	}
+	check v.1 "validate-node.sh (local mode) passes on a healthy node" validate ""
+	# expect_fail <check-name-regex> <cmd...>: the script must run, report
+	# RESULT: FAIL, and flag the given check.
+	expect_fail() {
+		local re=$1 out; shift
+		out=$("$@" 2>&1) && { echo "$out"; echo "expected failure"; return 1; }
+		echo "$out"
+		echo "$out" | grep -q "^RESULT: FAIL" && echo "$out" | grep -Eq "^FAIL +$re "
+	}
+	check v.2 "validate-node.sh fails when expected Cilium TCX programs are missing" expect_fail tcx validate 'ingress:cil_from_netdev egress:cil_to_netdev'
+	check v.3 "validate-node.sh without bpftool falls back to daemon-reported state" validate "" BPFTOOL=false
+	validate_remote() {
+		# Stand-in for kubectl: "exec ... -- cmd" runs the daemon binary in the node netns.
+		printf '%s\n' '#!/bin/sh' \
+			'while [ "$1" != "--" ]; do shift; done; shift' \
+			'[ "$1" = /usr/local/bin/xdpl2-daemon ] && shift' \
+			"exec nsenter --net=/run/netns/${P}node $BIN/xdpl2-daemon \"\$@\" --socket $SOCK" >"$WORK/kubectl"
+		chmod +x "$WORK/kubectl"
+		env KUBECTL="$WORK/kubectl" XDPL2_POD=xdpl2-test XDPL2_EXPECT_TCX="" XDPL2_EXPECT_XDP_MODE="$MODE" "$ROOT/hack/validate-node.sh"
+	}
+	check v.4 "validate-node.sh (remote mode via KUBECTL) passes" validate_remote
+
 	check z.1 "no data path parse/redirect errors" eval "[ \$(stat_of datapath_parse_error) = 0 ] && [ \$(stat_of datapath_redirect_error) = 0 ]"
 	check z.2 "no flood ring overflows or transmit errors" eval "[ \$(stat_of datapath_flood_rb_full) = 0 ] && [ \$(stat_of flood_tx_errors) = 0 ]"
 
@@ -532,6 +560,7 @@ run_suite() {
 	check t.2 "teardown detaches XDP/TCX, removes pins and state, restores promiscuous mode" teardown_ok
 	check t.3 "teardown is idempotent" td
 	check t.4 "unicast stops after teardown (data path really gone)" eval "! ns pod1 ping -c 1 -W 1 $IP2 >/dev/null"
+	check t.5 "validate-node.sh flags missing XDP after teardown" expect_fail xdp validate ""
 	cleanup
 }
 
