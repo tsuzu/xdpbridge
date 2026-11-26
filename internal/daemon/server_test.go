@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -32,7 +33,9 @@ func newFakeDP() *fakeDP {
 	return &fakeDP{ports: map[uint32]datapath.PortSpec{}, fdb: map[string]uint32{}, ifidx: map[int]uint32{}, pinned: map[uint32]int{}, xdp: true}
 }
 
-func fk(mac net.HardwareAddr, vlan uint16) string { return mac.String() + "/" + string(rune('0'+vlan%10)) + string(rune(vlan)) }
+func fk(mac net.HardwareAddr, vlan uint16) string {
+	return mac.String() + "/" + strconv.Itoa(int(vlan))
+}
 
 func (f *fakeDP) SetPort(p datapath.PortSpec, old *datapath.PortSpec) error {
 	f.mu.Lock()
