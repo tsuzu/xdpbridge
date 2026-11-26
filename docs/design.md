@@ -257,8 +257,19 @@ Frames larger than 2048 bytes are not replicated (counter `flood_too_big`).
   * **repair**: re-programs any port whose `port_table`, `ifindex_ports`,
     `ports` entry or pinned TCX link is missing or wrong, and logs it at
     error level (counter `reconcile_repairs`),
-  * **garbage collection**: removes ports whose host veth or netns path has
-    disappeared (a pod deleted without CNI DEL; counter `reconcile_gc`),
+  * **garbage collection**: removes ports whose **host veth** has been
+    missing on two consecutive passes (a pod deleted without CNI DEL;
+    counter `reconcile_gc`). The veth is the liveness signal because a veth
+    pair dies with its netns: when the pod's netns is destroyed, the
+    kernel deletes the peer and with it the host end. Only a netlink
+    "not found" counts as a miss; other lookup errors are reported, never
+    acted on,
+  * **netns visibility**: a live port whose recorded netns path does not
+    exist in the daemon's mount namespace is **kept** and reported (one
+    ERROR log per port, a `/healthz` problem,
+    `xdpl2_ports_netns_not_visible`). This means the daemon lacks the
+    host's `/run/netns` mount. Paths are checked under both `/var/run/` and
+    `/run/`. (Before phase 2b a missing path triggered GC; see section 8.)
   * **orphans**: deletes map entries that no registered port owns,
   * **watchdog**: a host veth with the `xl` prefix that has no registration
     on two consecutive passes is logged as `WATCHDOG: … no working xdpl2
@@ -406,6 +417,28 @@ flag off the daemon never touches the API and needs no token.
 | Port whose pod is gone from the node (k8s watchdog on) | Reported (GC happens when the veth disappears) | `xdpl2_k8s_orphan_ports`, `/healthz` 503 |
 | API server unreachable (k8s watchdog on) | Cross-check paused; data path unaffected | `/healthz` 503 with the API error |
 | Daemon stopped, data path must go | Nothing happens by itself (hitless restarts) | run `xdpl2-daemon teardown` (section 6.1) |
+| Daemon cannot see pod netns paths (no host `/run/netns` mount) | Ports are kept and keep forwarding | ERROR log per port, `/healthz` 503, `xdpl2_ports_netns_not_visible` |
+| Host veth lookup fails with an error other than "not found" | Port kept, nothing changed | `/healthz` problem |
+
+**Fixed in phase 2b: live ports garbage-collected.** On the first Multus
+end-to-end attempt on a real cluster, the reconciler removed a live port
+1.5 s after registration (`veth_gone=false, netns_gone=true`). The pod kept
+running with a dead interface, which is the silent failure xdpl2 exists to
+prevent. Cause: GC fired on "host veth gone **or** netns path gone", and
+the netns path was checked in the daemon's own mount namespace. The test
+harness, and the shipped DaemonSet, did not mount the host's `/run/netns`,
+so every live port looked netns-gone. The fix has three layers:
+
+1. The host veth is the only GC signal, and it must be missing on two
+   consecutive passes. An invisible netns path becomes a loud problem
+   instead.
+2. `deploy/daemonset.yaml` mounts the host `/run/netns` read-only with
+   `HostToContainer` propagation. This assumes the runtime's netns
+   directory is `/run/netns` or `/var/run/netns` with `/var/run → /run` (true
+   on Talos and most distributions); otherwise change the hostPath.
+3. Regression tests: a unit test (`TestNetnsPathInvisibleDoesNotGC`) and a
+   netns test (r.8), which runs the real daemon in a mount namespace where
+   `/run/netns` is hidden.
 
 ### Same-node legacy macvlan endpoints
 
@@ -510,13 +543,12 @@ Findings:
   unchanged. So `install-cni` with hostPath `/opt/cni/bin` is the same
   mechanism and needs no Talos-specific change. The atomic rename avoids
   kubelet or Multus executing a half-written file.
-* **IPAM plugins.** Reference plugins (`host-local`, `static`, …) are
-  reported to be bundled with Talos since v1.8, replacing the deprecated
-  `siderolabs/install-cni` image. This comes from search results and was
-  not confirmed in the fetched guide text; the operator should verify with
-  `talosctl -n <node> list /opt/cni/bin` before relying on it. xdpl2
-  delegates IPAM via `CNI_PATH` (Multus passes its `binDir`), so whatever
-  is in `/opt/cni/bin` is used.
+* **IPAM plugins. Verified in phase 2b:** the Talos node's `/opt/cni/bin`
+  contains `host-local` and the other standard reference plugins, so no
+  extra installation is needed. xdpl2 delegates IPAM via `CNI_PATH` (Multus
+  passes its `binDir`). For `host-local` on Talos, a `dataDir` under
+  `/run` (e.g. `/run/cni/networks`) keeps allocations on tmpfs, so they do
+  not survive a reboot as stale leases.
 * **Reboot ordering.** After a reboot, kubelet may start pods before the
   xdpl2 DaemonSet has run `install-cni` and before the daemon is ready.
   The plugin may then be missing, or ADD fails with "try again later" (code
@@ -529,9 +561,19 @@ distributions with a different CNI bin dir (e.g. `/var/lib/cni/bin`),
 change the `cni-bin` hostPath; the in-container destination can be set
 with `XDPL2_CNI_BIN_DIR` / `--dest`. No Talos system extension is needed.
 
-To be verified by the operator on the Talos node (phase 2b): the contents
-of `/opt/cni/bin` after the init container ran, the multus-daemon
-`chrootDir` setting in its daemon config, and one Multus-driven ADD/DEL.
+**Verified on a Talos node in phase 2b** (Multus thick, Cilium primary CNI):
+
+* `install-cni` placed the plugin at `/opt/cni/bin/xdpl2` through the hostPath.
+* With the daemon socket and state on hostPath `/run/xdpl2`, the chrooted
+  delegate reached the daemon.
+* A NAD (`type: xdpl2`, `vlan: 100`, `host-local` with `dataDir` under
+  `/run/cni`) gave a real pod `net1` with a correct `network-status`
+  annotation.
+* Pod↔gateway, pod↔LAN host and host↔pod traffic worked.
+* Deleting the pod produced a clean `port unregistered`.
+* The one bug found (live-port GC with an invisible netns path) is
+  described in section 8. The daemon also needs the host's `/run/netns`
+  (now in `deploy/daemonset.yaml`).
 
 ## 12. Future work
 
@@ -542,4 +584,4 @@ of `/opt/cni/bin` after the init container ran, the multus-daemon
 * IGMP/MLD snooping to replace multicast flooding.
 * Optional TC-only flood replication with `bpf_clone_redirect` for
   pod-originated frames, which removes userspace from that path.
-* A Kubernetes-API watchdog (see Deviation 9), and per-port counters.
+* Per-port counters.

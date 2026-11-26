@@ -80,6 +80,41 @@ Both run-1 failures are fixed on real hardware. Still open from workstream
 A: Multus end-to-end wiring on Talos (phase 2b, see design.md §11) and the
 Kubernetes-API watchdog against a real API server.
 
+## Phase 2b: Multus end-to-end on Talos (operator)
+
+<!-- Reported by the operator; environment-specific values omitted. -->
+
+Setup:
+* Multus thick on the Talos node, with the plugin installed by
+  `install-cni` as `/opt/cni/bin/xdpl2`.
+* Daemon socket and state on hostPath `/run/xdpl2`, so the chrooted
+  delegate reaches them.
+* A NAD with `type: xdpl2`, `vlan: 100` and `host-local` IPAM (`dataDir`
+  under `/run/cni`).
+
+| Check | Result |
+|---|---|
+| Talos ships `host-local` and the other reference plugins in `/opt/cni/bin` (design.md §11 question) | VERIFIED |
+| Real pod gets `net1` with a VLAN 100 address and a correct `network-status` annotation | PASS |
+| Pod ↔ LAN gateway, pod ↔ LAN host, host ↔ pod | PASS |
+| Pod deletion: clean `port unregistered`, ports back to 0 | PASS |
+| First attempt: reconciler GC'd the live port 1.5 s after registration (`veth_gone=false, netns_gone=true`); the Running pod was left with a dead interface | **FAIL: bug** (worked around by bind-mounting the host `/run/netns`) |
+
+**Bug fix (code side, after 2b):**
+* **Cause:** GC fired on "veth gone OR netns path gone", and the netns path
+  was checked in the daemon's own mount namespace, which had no
+  `/run/netns`.
+* **Fix:** the host veth alone decides liveness, and it must be missing on
+  two consecutive passes. An invisible netns path is now a loud problem
+  (`/healthz` 503, ERROR log, `xdpl2_ports_netns_not_visible`) and the port
+  is kept. `deploy/daemonset.yaml` now mounts the host `/run/netns`
+  (`HostToContainer`).
+* **Regression tests:** `TestNetnsPathInvisibleDoesNotGC`,
+  `TestDaemonSetMountsNetns`, and netns test r.8, which runs the real
+  daemon with `/run/netns` hidden.
+* **Not yet re-validated:** the fix still needs a run on the cluster
+  *without* the manual bind mount, using the updated DaemonSet.
+
 ## Phase 1 summary
 
 **What works (verified by the netns integration test, native and generic XDP):**

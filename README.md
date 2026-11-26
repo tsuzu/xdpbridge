@@ -77,6 +77,13 @@ The full data path, map layout, flood design and failure modes are in
   (`host-local`, `static`, `whereabouts`, …) must be present in
   `/opt/cni/bin`.
 * bpffs mounted at `/sys/fs/bpf` on the node (standard with Cilium).
+* Pod network namespaces under `/run/netns` (or `/var/run/netns` with
+  `/var/run` a symlink to `/run`, as on Talos). The DaemonSet mounts it so
+  the reconciler can see them; adjust the `netns` hostPath otherwise.
+* With Multus thick, keep its default `chrootDir`. The plugin then runs
+  against the host root and reaches the daemon socket at `/run/xdpl2`.
+  Verified on Talos, which ships `host-local` and the other reference
+  plugins in `/opt/cni/bin`.
 
 ## Install
 
