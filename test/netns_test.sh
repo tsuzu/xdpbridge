@@ -94,8 +94,15 @@ status_field() {
 		python3 -c "import json,sys; d=json.load(sys.stdin); print(d$1)"
 }
 
+# start_daemon; with HIDE_NETNS=1 the daemon runs in a private mount
+# namespace whose /run/netns is an empty tmpfs, i.e. it cannot see the pod
+# netns paths (a daemon container without the host /run/netns mount).
 start_daemon() {
-	nsenter --net="/run/netns/${P}node" "$BIN/xdpl2-daemon" --uplink uplink0 --bpffs "$WORK/bpffs/xdpl2" \
+	local pre=(nsenter --net="/run/netns/${P}node")
+	if [ "${HIDE_NETNS:-0}" = 1 ]; then
+		pre+=(unshare -m --propagation private sh -c 'mount -t tmpfs xdpl2-hidden /run/netns && exec "$@"' sh)
+	fi
+	"${pre[@]}" "$BIN/xdpl2-daemon" --uplink uplink0 --bpffs "$WORK/bpffs/xdpl2" \
 		--socket "$SOCK" --state-file "$WORK/state.json" --xdp-mode "$MODE" \
 		--probe-addr "" --reconcile-interval 1s --log-format text \
 		>>"$WORK/daemon.log" 2>&1 &
@@ -481,6 +488,27 @@ run_suite() {
 		echo "$out" | grep -q "refusing to replace foreign XDP program"
 	}
 	check r.5 "refuses to take over an XDP hook owned by someone else" foreign_xdp
+
+	# Regression (phase 2b, real cluster): a daemon that cannot see the pod
+	# netns paths garbage-collected live ports seconds after registration.
+	netns_invisible() {
+		local before n
+		before=$(status_field "['ports']")
+		stop_daemon
+		HIDE_NETNS=1 start_daemon || return 1
+		ls /proc/"$DPID"/root/run/netns/ 2>/dev/null | grep -q "^${P}" && { echo "netns paths still visible to the daemon"; return 1; }
+		sleep 3.5 # > 3 reconcile passes
+		n=$(status_field "['ports']")
+		[ "$n" = "$before" ] || { echo "ports $before -> $n: live ports were garbage-collected"; return 1; }
+		[ "$(status_field "['netnsNotVisible']")" = "$before" ] || { echo "netnsNotVisible not reported"; node "$BIN/xdpl2-daemon" status --socket "$SOCK"; return 1; }
+		[ "$(status_field "['healthy']")" = False ] || { echo "must be unhealthy"; return 1; }
+		grep -q "netns path of a live port is not visible" "$WORK/daemon.log" || { echo "no error log"; return 1; }
+		arp_dir pod1 "$IP2" "$MAC2" || { echo "forwarding broken"; return 1; }
+		echo "ports kept: $n, netnsNotVisible=$n, unhealthy, forwarding OK"
+		stop_daemon
+		start_daemon && [ "$(status_field "['netnsNotVisible']" 2>/dev/null || echo 0)" != "$before" ]
+	}
+	check r.8 "daemon that cannot see pod netns paths keeps live ports and reports it (no GC)" netns_invisible
 
 	gc() {
 		ns pod3 ip link del eth1
