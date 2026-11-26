@@ -180,9 +180,45 @@ Every flag can also be set through an environment variable:
 | `--reconcile-interval` | — | `10s` |
 | `--log-level`, `--log-format` | `XDPL2_LOG_LEVEL`, `XDPL2_LOG_FORMAT` | `info`, `json` |
 
-To uninstall from a node, delete the DaemonSet. Then run
-`xdpl2-daemon teardown` on the node (or remove `/sys/fs/bpf/xdpl2`), which
-detaches the pinned programs. By design they outlive the daemon.
+### Kubernetes-API watchdog (optional)
+
+`kubectl apply -k deploy/k8s-watch/` instead of `deploy/` enables a
+cross-check of registered ports against the pods on each node. A running
+pod whose xdpl2 attachment has no port, or a port without its pod, then
+fails `/healthz` and shows up in `xdpl2_k8s_missing_ports` /
+`xdpl2_k8s_orphan_ports`. The overlay adds read-only RBAC for pods and NADs
+and mounts the ServiceAccount token. The base deployment mounts no token.
+
+### Validating a node
+
+`hack/validate-node.sh` prints a PASS/FAIL summary. It checks that the XDP
+program is attached, Cilium's TCX programs are still on the uplink, the
+daemon is healthy, and the pins are present:
+
+```sh
+# on the node (privileged hostNetwork pod with ip/bpftool):
+XDPL2_UPLINK=eth1 hack/validate-node.sh
+# from a workstation, through the node's daemon pod:
+KUBECTL="kubectl --context my-cluster" XDPL2_NODE=<node> hack/validate-node.sh
+```
+
+Set `XDPL2_EXPECT_TCX=""` on clusters without Cilium. The header of the
+script lists all settings.
+
+### Uninstall
+
+Stopping or deleting the daemon **does not** remove the data path. Pinned
+links keep forwarding, so that restarts are hitless. To remove xdpl2 from a
+node, delete the DaemonSet (or unlabel the node), then run on the node:
+
+```sh
+xdpl2-daemon teardown        # --bpffs/--state-file if not default
+```
+
+It detaches every pinned XDP/TCX link, removes the pins under
+`/sys/fs/bpf/xdpl2`, restores the uplink's promiscuous mode and VLAN
+offloads, verifies that no XDP program remains, and refuses to run while a
+daemon is still serving.
 
 ## Coexistence with Cilium
 
@@ -212,15 +248,17 @@ the NIC's XDP hook empty.
 * **Flood path in userspace.** If the daemon is down, unicast keeps working
   on the pinned data path, but new ARP/ND resolutions fail until it is back.
   Flood frames larger than 2048 bytes are not replicated.
-* **VLAN**: access ports only (one VLAN per attachment). The host port is
-  untagged. The NIC's VLAN RX offload is turned off. If the driver cannot
-  turn it off, tagged traffic for VLAN ports is not switched (warning
-  logged).
+* **VLAN**: access ports only (one VLAN per attachment). The host takes
+  part on the untagged segment and on every 802.1Q subinterface of the
+  uplink (`<uplink>.<vid>`), discovered automatically. The NIC's VLAN RX
+  offload is turned off. If the driver cannot turn it off, tagged traffic
+  for VLAN ports is not switched (warning logged).
+* A port cannot reach a **macvlan** endpoint on the same node (the
+  physical switch does not hairpin). Migrating that workload to xdpl2
+  resolves it. See docs/design.md.
 * **IPv6**: ND/MLD work through the flood path, and link-local ping is
   tested. There is no ND proxying or MLD snooping, and IPv6 coverage is
   thinner than IPv4.
-* The node-local watchdog checks veths against registrations. It does not
-  yet cross-check against the Kubernetes pod list.
 * Bonds, VLAN sub-interfaces and bridges as uplinks are untested.
 * Performance has only been sanity-checked on veths (see TESTLOG.md). Those
   numbers say nothing about real NICs.
