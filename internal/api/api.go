@@ -90,11 +90,26 @@ type Status struct {
 	Counters map[string]uint64 `json:"counters"`
 	// UnregisteredVeths lists host veths with our prefix but no registration.
 	UnregisteredVeths []string `json:"unregisteredVeths,omitempty"`
+	// UplinkPrograms is what the kernel reports as attached to the uplink.
+	UplinkPrograms *UplinkPrograms `json:"uplinkPrograms,omitempty"`
+	// Pins lists pinned maps and links (relative to the bpffs directory).
+	Pins []string `json:"pins,omitempty"`
 	// HostVLANs lists the VLANs on which the host stack is a switch port
 	// (0 = the uplink itself; others are 802.1Q subinterfaces).
 	HostVLANs []int `json:"hostVLANs,omitempty"`
 	// K8s is present when the Kubernetes-API watchdog is enabled.
 	K8s *K8sStatus `json:"k8s,omitempty"`
+}
+
+// UplinkPrograms mirrors datapath.UplinkPrograms. Comma-joined copies make
+// the status easy to check from shell scripts without a JSON parser.
+type UplinkPrograms struct {
+	XDP           string   `json:"xdp"`
+	XDPMode       string   `json:"xdpMode,omitempty"`
+	TCXIngress    []string `json:"tcxIngress"`
+	TCXEgress     []string `json:"tcxEgress"`
+	TCXIngressCSV string   `json:"tcxIngressCSV"`
+	TCXEgressCSV  string   `json:"tcxEgressCSV"`
 }
 
 // K8sStatus reports the Kubernetes-API cross-check.

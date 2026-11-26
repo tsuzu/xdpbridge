@@ -46,6 +46,13 @@ type Dataplane interface {
 	Mode() datapath.XDPMode
 }
 
+// Inspector is optionally implemented by the Dataplane to report kernel
+// state in /v1/status.
+type Inspector interface {
+	InspectUplink() datapath.UplinkPrograms
+	Pins() []string
+}
+
 // Links resolves interfaces in the host network namespace.
 type Links interface {
 	IndexByName(name string) (int, error)
@@ -607,6 +614,14 @@ func (s *Server) Status() api.Status {
 	}
 	for v := range s.hostVLANs {
 		st.HostVLANs = append(st.HostVLANs, int(v))
+	}
+	if in, ok := s.dp.(Inspector); ok {
+		u := in.InspectUplink()
+		st.UplinkPrograms = &api.UplinkPrograms{
+			XDP: u.XDP, XDPMode: u.XDPMode, TCXIngress: u.TCXIngress, TCXEgress: u.TCXEgress,
+			TCXIngressCSV: strings.Join(u.TCXIngress, ","), TCXEgressCSV: strings.Join(u.TCXEgress, ","),
+		}
+		st.Pins = in.Pins()
 	}
 	sort.Ints(st.HostVLANs)
 	s.mu.Unlock()
