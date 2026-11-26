@@ -64,9 +64,9 @@ func ParseNetworks(value, podNS string) ([]Attachment, error) {
 	return out, nil
 }
 
-// IsXdpl2Config reports whether a NAD spec.config uses the xdpl2 plugin,
+// IsXdpbridgeConfig reports whether a NAD spec.config uses the xdpbridge plugin,
 // either as a single plugin config or inside a "plugins" list.
-func IsXdpl2Config(config string, pluginType string) bool {
+func IsXdpbridgeConfig(config string, pluginType string) bool {
 	var c struct {
 		Type    string `json:"type"`
 		Plugins []struct {

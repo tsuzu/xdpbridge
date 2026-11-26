@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: Apache-2.0
 #
-# xdpl2 netns integration test.
+# xdpbridge netns integration test.
 #
 # Builds a self-contained topology out of network namespaces and veth pairs,
 # runs the real daemon and CNI plugin against it and verifies forwarding with
@@ -9,8 +9,8 @@
 #
 #   ext  (192.0.2.100, VLAN 100: 198.51.100.100)   "the LAN"
 #    | ext0 <-> uplink0   (uplink0 stands in for the physical NIC)
-#   node (192.0.2.1)  xdpl2-daemon, CNI plugin invoked here
-#    | xl<hash> <-> eth1   (created by xdpl2-cni)
+#   node (192.0.2.1)  xdpbridge-daemon, CNI plugin invoked here
+#    | xl<hash> <-> eth1   (created by xdpbridge-cni)
 #   pod1, pod2, pod3 (untagged, 192.0.2.10-19), pod4 (VLAN 100)
 #
 # Usage: sudo test/netns_test.sh [--mode native|generic|both] [--keep] [--testlog FILE]
@@ -34,7 +34,7 @@ done
 [ "$MODES" = both ] && MODES="native generic"
 
 [ "$(id -u)" = 0 ] || { echo "must run as root" >&2; exit 2; }
-for b in xdpl2-daemon xdpl2-cni host-local; do
+for b in xdpbridge-daemon xdpbridge-cni host-local; do
 	[ -x "$BIN/$b" ] || { echo "missing $BIN/$b (run: make build)" >&2; exit 2; }
 done
 for t in ip tcpdump iperf3 python3 nsenter; do
@@ -86,11 +86,11 @@ cleanup() {
 trap cleanup EXIT
 
 stat_of() { # stat_of <counter>
-	node "$BIN/xdpl2-daemon" status --socket "$SOCK" |
+	node "$BIN/xdpbridge-daemon" status --socket "$SOCK" |
 		python3 -c "import json,sys; print(json.load(sys.stdin)['counters'].get('$1',0))"
 }
 status_field() {
-	node "$BIN/xdpl2-daemon" status --socket "$SOCK" |
+	node "$BIN/xdpbridge-daemon" status --socket "$SOCK" |
 		python3 -c "import json,sys; d=json.load(sys.stdin); print(d$1)"
 }
 
@@ -100,15 +100,15 @@ status_field() {
 start_daemon() {
 	local pre=(nsenter --net="/run/netns/${P}node")
 	if [ "${HIDE_NETNS:-0}" = 1 ]; then
-		pre+=(unshare -m --propagation private sh -c 'mount -t tmpfs xdpl2-hidden /run/netns && exec "$@"' sh)
+		pre+=(unshare -m --propagation private sh -c 'mount -t tmpfs xdpbridge-hidden /run/netns && exec "$@"' sh)
 	fi
-	"${pre[@]}" "$BIN/xdpl2-daemon" --uplink uplink0 --bpffs "$WORK/bpffs/xdpl2" \
+	"${pre[@]}" "$BIN/xdpbridge-daemon" --uplink uplink0 --bpffs "$WORK/bpffs/xdpbridge" \
 		--socket "$SOCK" --state-file "$WORK/state.json" --xdp-mode "$MODE" \
 		--probe-addr "" --reconcile-interval 1s --log-format text \
 		>>"$WORK/daemon.log" 2>&1 &
 	DPID=$!
 	for _ in $(seq 50); do
-		[ -S "$SOCK" ] && node "$BIN/xdpl2-daemon" status --socket "$SOCK" >/dev/null 2>&1 && return 0
+		[ -S "$SOCK" ] && node "$BIN/xdpbridge-daemon" status --socket "$SOCK" >/dev/null 2>&1 && return 0
 		kill -0 "$DPID" 2>/dev/null || return 1
 		sleep 0.1
 	done
@@ -118,7 +118,7 @@ stop_daemon() { kill "$DPID" 2>/dev/null; wait "$DPID" 2>/dev/null; DPID=; }
 
 netconf() { # netconf <vlan> <subnet-prefix>
 	cat <<EOF
-{"cniVersion":"1.0.0","name":"lan$1","type":"xdpl2","socket":"$SOCK","vlan":$1,
+{"cniVersion":"1.0.0","name":"lan$1","type":"xdpbridge","socket":"$SOCK","vlan":$1,
  "ipam":{"type":"host-local","dataDir":"$WORK/ipam",
    "ranges":[[{"subnet":"$2.0/24","rangeStart":"$2.10","rangeEnd":"$2.19"}]]}}
 EOF
@@ -132,7 +132,7 @@ cni() { # cni <CMD> <pod> <vlan> <subnet-prefix> [prevResult-file]
 	fi
 	echo "$conf" | CNI_COMMAND=$1 CNI_CONTAINERID="c-$2" CNI_NETNS="/run/netns/$P$2" \
 		CNI_IFNAME=eth1 CNI_PATH="$BIN" CNI_ARGS="IgnoreUnknown=1;K8S_POD_NAMESPACE=test;K8S_POD_NAME=$2" \
-		node "$BIN/xdpl2-cni"
+		node "$BIN/xdpbridge-cni"
 }
 
 pod_ip() { python3 -c "import json; print(json.load(open('$WORK/$1.json'))['ips'][0]['address'].split('/')[0])"; }
@@ -159,8 +159,8 @@ arp_dir() { # arp_dir <from-ns> <to-ip> <expected-mac>
 
 run_suite() {
 	MODE=$1
-	WORK=$(mktemp -d /tmp/xdpl2-test.XXXXXX)
-	SOCK=$WORK/xdpl2.sock
+	WORK=$(mktemp -d /tmp/xdpbridge-test.XXXXXX)
+	SOCK=$WORK/xdpbridge.sock
 	mkdir -p "$WORK/bpffs"
 	mount -t bpf bpf "$WORK/bpffs" || { echo "cannot mount bpffs" >&2; return 1; }
 
@@ -203,9 +203,9 @@ run_suite() {
 		cleanup
 		return
 	fi
-	if [ -n "${XDPL2_SETUP_ONLY:-}" ]; then
+	if [ -n "${XDPBRIDGE_SETUP_ONLY:-}" ]; then
 		trap - EXIT
-		log "XDPL2_SETUP_ONLY: topology left running (daemon pid $DPID, work dir $WORK, socket $SOCK)"
+		log "XDPBRIDGE_SETUP_ONLY: topology left running (daemon pid $DPID, work dir $WORK, socket $SOCK)"
 		exit 0
 	fi
 
@@ -346,10 +346,10 @@ run_suite() {
 		capture node uplink0 "ether proto 0x88b5" 3 "$WORK/raw-node.cap"
 		capture pod1 eth1 "ether proto 0x88b5" 3 "$WORK/raw-pod1.cap"
 		sleep 0.7
-		ns ext $UDP raw ext0 02:00:00:00:99:99 88b5 xdpl2-unknown-unicast
+		ns ext $UDP raw ext0 02:00:00:00:99:99 88b5 xdpbridge-unknown-unicast
 		waitbg
-		grep -q xdpl2-unknown-unicast "$WORK/raw-node.cap" || { echo "host stack did not see frame"; return 1; }
-		! grep -q xdpl2-unknown-unicast "$WORK/raw-pod1.cap" || { echo "unknown unicast leaked to pod"; return 1; }
+		grep -q xdpbridge-unknown-unicast "$WORK/raw-node.cap" || { echo "host stack did not see frame"; return 1; }
+		! grep -q xdpbridge-unknown-unicast "$WORK/raw-pod1.cap" || { echo "unknown unicast leaked to pod"; return 1; }
 	}
 	check f.2 "unknown-unicast non-IP frame reaches host stack unmodified, not pods" raw_pass
 	check f.3 "ext -> host TCP (iperf3) unaffected" eval "ns node iperf3 -s -1 -D >/dev/null; sleep 0.5; ns ext iperf3 -c 192.0.2.1 -t 1 >/dev/null"
@@ -376,10 +376,10 @@ run_suite() {
 	ns node ip addr add 198.51.100.1/24 dev uplink0.100
 	host_vlan_seen() {
 		for _ in $(seq 50); do
-			node "$BIN/xdpl2-daemon" status --socket "$SOCK" | tr -d ' \n' | grep -q '"hostVLANs":\[0,100\]' && return 0
+			node "$BIN/xdpbridge-daemon" status --socket "$SOCK" | tr -d ' \n' | grep -q '"hostVLANs":\[0,100\]' && return 0
 			sleep 0.1
 		done
-		node "$BIN/xdpl2-daemon" status --socket "$SOCK"
+		node "$BIN/xdpbridge-daemon" status --socket "$SOCK"
 		return 1
 	}
 	check g.5 "daemon discovers host VLAN subinterface uplink0.100 at runtime" host_vlan_seen
@@ -481,7 +481,7 @@ run_suite() {
 
 	foreign_xdp() {
 		local out
-		out=$(node "$BIN/xdpl2-daemon" --uplink uplink0 --bpffs "$WORK/bpffs/other" \
+		out=$(node "$BIN/xdpbridge-daemon" --uplink uplink0 --bpffs "$WORK/bpffs/other" \
 			--socket "$WORK/other.sock" --state-file "$WORK/other.json" --probe-addr "" 2>&1) &&
 			{ echo "second daemon did not refuse"; return 1; }
 		echo "$out" | tail -1
@@ -500,7 +500,7 @@ run_suite() {
 		sleep 3.5 # > 3 reconcile passes
 		n=$(status_field "['ports']")
 		[ "$n" = "$before" ] || { echo "ports $before -> $n: live ports were garbage-collected"; return 1; }
-		[ "$(status_field "['netnsNotVisible']")" = "$before" ] || { echo "netnsNotVisible not reported"; node "$BIN/xdpl2-daemon" status --socket "$SOCK"; return 1; }
+		[ "$(status_field "['netnsNotVisible']")" = "$before" ] || { echo "netnsNotVisible not reported"; node "$BIN/xdpbridge-daemon" status --socket "$SOCK"; return 1; }
 		[ "$(status_field "['healthy']")" = False ] || { echo "must be unhealthy"; return 1; }
 		grep -q "netns path of a live port is not visible" "$WORK/daemon.log" || { echo "no error log"; return 1; }
 		arp_dir pod1 "$IP2" "$MAC2" || { echo "forwarding broken"; return 1; }
@@ -530,9 +530,9 @@ run_suite() {
 
 	# hack/validate-node.sh against this node (no Cilium here).
 	validate() { # validate <expect-tcx> [extra env...]
-		node env XDPL2_UPLINK=uplink0 XDPL2_BPFFS="$WORK/bpffs/xdpl2" XDPL2_SOCKET="$SOCK" \
-			XDPL2_PROBE_ADDR=127.0.0.1:1 XDPL2_DAEMON_BIN="$BIN/xdpl2-daemon" BPFTOOL="${BPFTOOL:-false}" \
-			XDPL2_EXPECT_XDP_MODE="$MODE" XDPL2_EXPECT_TCX="$1" "${@:2}" "$ROOT/hack/validate-node.sh"
+		node env XDPBRIDGE_UPLINK=uplink0 XDPBRIDGE_BPFFS="$WORK/bpffs/xdpbridge" XDPBRIDGE_SOCKET="$SOCK" \
+			XDPBRIDGE_PROBE_ADDR=127.0.0.1:1 XDPBRIDGE_DAEMON_BIN="$BIN/xdpbridge-daemon" BPFTOOL="${BPFTOOL:-false}" \
+			XDPBRIDGE_EXPECT_XDP_MODE="$MODE" XDPBRIDGE_EXPECT_TCX="$1" "${@:2}" "$ROOT/hack/validate-node.sh"
 	}
 	check v.1 "validate-node.sh (local mode) passes on a healthy node" validate ""
 	# expect_fail <check-name-regex> <cmd...>: the script must run, report
@@ -549,10 +549,10 @@ run_suite() {
 		# Stand-in for kubectl: "exec ... -- cmd" runs the daemon binary in the node netns.
 		printf '%s\n' '#!/bin/sh' \
 			'while [ "$1" != "--" ]; do shift; done; shift' \
-			'[ "$1" = /usr/local/bin/xdpl2-daemon ] && shift' \
-			"exec nsenter --net=/run/netns/${P}node $BIN/xdpl2-daemon \"\$@\" --socket $SOCK" >"$WORK/kubectl"
+			'[ "$1" = /usr/local/bin/xdpbridge-daemon ] && shift' \
+			"exec nsenter --net=/run/netns/${P}node $BIN/xdpbridge-daemon \"\$@\" --socket $SOCK" >"$WORK/kubectl"
 		chmod +x "$WORK/kubectl"
-		env KUBECTL="$WORK/kubectl" XDPL2_POD=xdpl2-test XDPL2_EXPECT_TCX="" XDPL2_EXPECT_XDP_MODE="$MODE" "$ROOT/hack/validate-node.sh"
+		env KUBECTL="$WORK/kubectl" XDPBRIDGE_POD=xdpbridge-test XDPBRIDGE_EXPECT_TCX="" XDPBRIDGE_EXPECT_XDP_MODE="$MODE" "$ROOT/hack/validate-node.sh"
 	}
 	check v.4 "validate-node.sh (remote mode via KUBECTL) passes" validate_remote
 
@@ -560,13 +560,13 @@ run_suite() {
 	check z.2 "no flood ring overflows or transmit errors" eval "[ \$(stat_of datapath_flood_rb_full) = 0 ] && [ \$(stat_of flood_tx_errors) = 0 ]"
 
 	log "final daemon status:"
-	node "$BIN/xdpl2-daemon" status --socket "$SOCK" | sed 's/^/    /'
+	node "$BIN/xdpbridge-daemon" status --socket "$SOCK" | sed 's/^/    /'
 
 	# Teardown: stopping the daemon leaves the pinned data path in place
-	# (hitless restarts); `xdpl2-daemon teardown` removes it.
+	# (hitless restarts); `xdpbridge-daemon teardown` removes it.
 	local PORTIF
 	PORTIF=$(python3 -c "import json; print(json.load(open('$WORK/pod2.json'))['interfaces'][0]['name'])")
-	td() { node "$BIN/xdpl2-daemon" teardown --bpffs "$WORK/bpffs/xdpl2" --socket "$SOCK" --state-file "$WORK/state.json" "$@"; }
+	td() { node "$BIN/xdpbridge-daemon" teardown --bpffs "$WORK/bpffs/xdpbridge" --socket "$SOCK" --state-file "$WORK/state.json" "$@"; }
 	check t.1 "teardown refuses while the daemon is serving" eval "! td"
 	teardown_ok() {
 		stop_daemon
@@ -574,7 +574,7 @@ run_suite() {
 		td || return 1
 		if ns node ip -d link show uplink0 | grep -q "prog/xdp"; then echo "XDP still attached"; return 1; fi
 		if ns node ip link show uplink0 | grep -q PROMISC; then echo "promiscuous mode not restored"; return 1; fi
-		[ ! -e "$WORK/bpffs/xdpl2" ] || { echo "pins left:"; ls -R "$WORK/bpffs/xdpl2"; return 1; }
+		[ ! -e "$WORK/bpffs/xdpbridge" ] || { echo "pins left:"; ls -R "$WORK/bpffs/xdpbridge"; return 1; }
 		[ ! -e "$WORK/state.json" ] || { echo "state file left"; return 1; }
 		if [ -n "$BPFTOOL" ]; then
 			local tcx
@@ -627,7 +627,7 @@ if [ -n "$TESTLOG" ]; then
 		echo
 		echo '```text'
 		# Work dirs are random; strip them for a stable diff.
-		sed -E 's#/tmp/xdpl2-test\.[A-Za-z0-9]+#$WORK#g' "$RUNLOG"
+		sed -E 's#/tmp/xdpbridge-test\.[A-Za-z0-9]+#$WORK#g' "$RUNLOG"
 		echo '```'
 	} >"$TESTLOG"
 	rm -f "$RUNLOG"

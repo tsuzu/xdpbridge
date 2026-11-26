@@ -4,5 +4,5 @@
 package version
 
 // Version follows semantic versioning; overridden at build time with
-// -ldflags "-X github.com/tsuzu/xdpl2/internal/version.Version=v0.1.0".
+// -ldflags "-X github.com/tsuzu/xdpbridge/internal/version.Version=v0.1.0".
 var Version = "v0.1.0-dev"

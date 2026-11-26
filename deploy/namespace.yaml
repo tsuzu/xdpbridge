@@ -2,7 +2,7 @@
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: xdpl2-system
+  name: xdpbridge-system
   labels:
     # The daemon needs host networking and privileges.
     pod-security.kubernetes.io/enforce: privileged

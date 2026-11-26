@@ -2,8 +2,8 @@
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
-  name: xdpl2
-  namespace: xdpl2-system
+  name: xdpbridge
+  namespace: xdpbridge-system
 spec:
   template:
     spec:
@@ -12,5 +12,5 @@ spec:
       containers:
         - name: daemon
           env:
-            - name: XDPL2_K8S_WATCH
+            - name: XDPBRIDGE_K8S_WATCH
               value: "true"

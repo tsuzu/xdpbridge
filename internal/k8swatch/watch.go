@@ -2,8 +2,8 @@
 
 // Package k8swatch implements the optional Kubernetes-API watchdog: it
 // watches the pods scheduled on this node and the NetworkAttachmentDefinitions
-// that use xdpl2, so the daemon can cross-check "pods that should have an
-// xdpl2 port" against "ports that are registered".
+// that use xdpbridge, so the daemon can cross-check "pods that should have an
+// xdpbridge port" against "ports that are registered".
 //
 // It talks to the API server with plain HTTPS and the pod's ServiceAccount
 // token (no client-go), reading the token on every request so that bound
@@ -45,7 +45,7 @@ type Config struct {
 	CAFile    string
 	// NodeName limits the pod watch (field selector spec.nodeName).
 	NodeName string
-	// PluginType is the CNI type that marks a NAD as ours ("xdpl2").
+	// PluginType is the CNI type that marks a NAD as ours ("xdpbridge").
 	PluginType string
 	// NADResync is how often NADs are re-listed.
 	NADResync time.Duration
@@ -100,7 +100,7 @@ type nadList struct {
 	} `json:"items"`
 }
 
-// ExpectedPod is a live pod on this node with at least one xdpl2 attachment.
+// ExpectedPod is a live pod on this node with at least one xdpbridge attachment.
 type ExpectedPod struct {
 	Namespace   string
 	Name        string
@@ -116,14 +116,14 @@ func (p ExpectedPod) Key() string { return p.Namespace + "/" + p.Name }
 type Snapshot struct {
 	// Synced is true once both pods and NADs have been listed successfully.
 	Synced bool
-	// Expected lists pods that should have xdpl2 ports.
+	// Expected lists pods that should have xdpbridge ports.
 	Expected []ExpectedPod
 	// LivePods holds "namespace/name" of every live pod on the node.
 	LivePods map[string]bool
 	// Problems are watchdog-level errors (API unreachable, bad annotations).
 	Problems []string
-	// XDPL2NADs is the number of NADs using the plugin.
-	XDPL2NADs int
+	// XDPBRIDGENADs is the number of NADs using the plugin.
+	XDPBRIDGENADs int
 }
 
 // Watcher keeps a pod and NAD cache.
@@ -152,10 +152,10 @@ func InCluster() bool {
 // New validates the config and builds the HTTP client.
 func New(cfg Config) (*Watcher, error) {
 	if cfg.NodeName == "" {
-		return nil, errors.New("k8s watchdog: node name is required (set XDPL2_NODE_NAME from spec.nodeName)")
+		return nil, errors.New("k8s watchdog: node name is required (set XDPBRIDGE_NODE_NAME from spec.nodeName)")
 	}
 	if cfg.PluginType == "" {
-		cfg.PluginType = "xdpl2"
+		cfg.PluginType = "xdpbridge"
 	}
 	if cfg.NADResync == 0 {
 		cfg.NADResync = time.Minute
@@ -372,7 +372,7 @@ func (w *Watcher) listNADs(ctx context.Context) error {
 	}
 	nads := map[string]bool{}
 	for _, n := range l.Items {
-		if IsXdpl2Config(n.Spec.Config, w.cfg.PluginType) {
+		if IsXdpbridgeConfig(n.Spec.Config, w.cfg.PluginType) {
 			nads[n.Metadata.Namespace+"/"+n.Metadata.Name] = true
 		}
 	}
@@ -421,7 +421,7 @@ func sleep(ctx context.Context, d time.Duration) {
 func (w *Watcher) Snapshot() Snapshot {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	s := Snapshot{Synced: w.synced && w.nadSet, LivePods: map[string]bool{}, XDPL2NADs: len(w.nads)}
+	s := Snapshot{Synced: w.synced && w.nadSet, LivePods: map[string]bool{}, XDPBRIDGENADs: len(w.nads)}
 	if w.podErr != "" {
 		s.Problems = append(s.Problems, "k8s watchdog: pod list/watch failing: "+w.podErr)
 	}

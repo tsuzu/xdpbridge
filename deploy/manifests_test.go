@@ -2,7 +2,7 @@
 
 // Package deploy holds the Kubernetes manifests. This test lints them
 // offline: every document must parse, carry apiVersion/kind/name, embedded
-// CNI configs must be valid JSON for the xdpl2 plugin, and every IPv4 address
+// CNI configs must be valid JSON for the xdpbridge plugin, and every IPv4 address
 // must be an RFC 5737 documentation address (or loopback).
 package deploy
 
@@ -69,8 +69,8 @@ func TestWatchOverlay(t *testing.T) {
 	if err := yaml.Unmarshal(b, &p); err != nil {
 		t.Fatal(err)
 	}
-	if p.Metadata.Name != "xdpl2" || p.Metadata.Namespace != "xdpl2-system" {
-		t.Error("patch does not target the xdpl2 DaemonSet")
+	if p.Metadata.Name != "xdpbridge" || p.Metadata.Namespace != "xdpbridge-system" {
+		t.Error("patch does not target the xdpbridge DaemonSet")
 	}
 	ps := p.Spec.Template.Spec
 	if ps.Automount == nil || !*ps.Automount {
@@ -79,14 +79,14 @@ func TestWatchOverlay(t *testing.T) {
 	ok := false
 	for _, c := range ps.Containers {
 		for _, e := range c.Env {
-			ok = ok || (c.Name == "daemon" && e.Name == "XDPL2_K8S_WATCH" && e.Value == "true")
+			ok = ok || (c.Name == "daemon" && e.Name == "XDPBRIDGE_K8S_WATCH" && e.Value == "true")
 		}
 	}
 	if !ok {
-		t.Error("overlay must set XDPL2_K8S_WATCH=true on the daemon container")
+		t.Error("overlay must set XDPBRIDGE_K8S_WATCH=true on the daemon container")
 	}
 	base, _ := os.ReadFile("daemonset.yaml")
-	for _, want := range []string{"automountServiceAccountToken: false", "XDPL2_NODE_NAME", "spec.nodeName"} {
+	for _, want := range []string{"automountServiceAccountToken: false", "XDPBRIDGE_NODE_NAME", "spec.nodeName"} {
 		if !strings.Contains(string(base), want) {
 			t.Errorf("base DaemonSet lacks %q", want)
 		}
@@ -161,14 +161,14 @@ func checkCNIConfig(t *testing.T, f, cfg string) {
 	if c.CNIVersion == "" || c.Name == "" {
 		t.Errorf("%s: NAD config needs cniVersion and name", f)
 	}
-	found := c.Type == "xdpl2"
+	found := c.Type == "xdpbridge"
 	for _, p := range c.Plugins {
-		if p["type"] == "xdpl2" {
+		if p["type"] == "xdpbridge" {
 			found = true
 		}
 	}
 	if !found {
-		t.Errorf("%s: NAD config does not use the xdpl2 plugin", f)
+		t.Errorf("%s: NAD config does not use the xdpbridge plugin", f)
 	}
 }
 

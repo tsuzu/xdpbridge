@@ -1,41 +1,41 @@
 # SPDX-License-Identifier: Apache-2.0
 #
-# xdpl2 node daemon + CNI plugin installer.
+# xdpbridge node daemon + CNI plugin installer.
 #
-# Runs only on nodes labelled xdpl2/enabled=true:
-#   kubectl label node <node> xdpl2/enabled=true
+# Runs only on nodes labelled xdpbridge/enabled=true:
+#   kubectl label node <node> xdpbridge/enabled=true
 # Set the uplink in the ConfigMap below (a name, a comma-separated list of
 # candidates where the first existing one wins, or "default-route").
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: xdpl2
-  namespace: xdpl2-system
+  name: xdpbridge
+  namespace: xdpbridge-system
 automountServiceAccountToken: false
 ---
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: xdpl2-config
-  namespace: xdpl2-system
+  name: xdpbridge-config
+  namespace: xdpbridge-system
 data:
-  XDPL2_UPLINK: "eth1"
+  XDPBRIDGE_UPLINK: "eth1"
   # auto | native | generic
-  XDPL2_XDP_MODE: "auto"
-  XDPL2_LOG_LEVEL: "info"
+  XDPBRIDGE_XDP_MODE: "auto"
+  XDPBRIDGE_LOG_LEVEL: "info"
 ---
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
-  name: xdpl2
-  namespace: xdpl2-system
+  name: xdpbridge
+  namespace: xdpbridge-system
   labels:
-    app.kubernetes.io/name: xdpl2
+    app.kubernetes.io/name: xdpbridge
     app.kubernetes.io/component: node-daemon
 spec:
   selector:
     matchLabels:
-      app.kubernetes.io/name: xdpl2
+      app.kubernetes.io/name: xdpbridge
   updateStrategy:
     type: RollingUpdate
     rollingUpdate:
@@ -43,10 +43,10 @@ spec:
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: xdpl2
+        app.kubernetes.io/name: xdpbridge
         app.kubernetes.io/component: node-daemon
     spec:
-      serviceAccountName: xdpl2
+      serviceAccountName: xdpbridge
       automountServiceAccountToken: false
       # The daemon owns the uplink XDP hook and must live in the host netns.
       hostNetwork: true
@@ -55,14 +55,14 @@ spec:
       terminationGracePeriodSeconds: 10
       nodeSelector:
         kubernetes.io/os: linux
-        xdpl2/enabled: "true"
+        xdpbridge/enabled: "true"
       tolerations:
         - operator: Exists
       initContainers:
         - name: install-cni
-          image: ghcr.io/tsuzu/xdpl2:v0.1.0
-          command: ["/usr/local/bin/xdpl2-daemon", "install-cni",
-                    "--src", "/usr/local/bin/xdpl2-cni", "--dest", "/host/opt/cni/bin"]
+          image: ghcr.io/tsuzu/xdpbridge:v0.1.0
+          command: ["/usr/local/bin/xdpbridge-daemon", "install-cni",
+                    "--src", "/usr/local/bin/xdpbridge-cni", "--dest", "/host/opt/cni/bin"]
           securityContext:
             privileged: false
             readOnlyRootFilesystem: true
@@ -71,22 +71,22 @@ spec:
               mountPath: /host/opt/cni/bin
       containers:
         - name: daemon
-          image: ghcr.io/tsuzu/xdpl2:v0.1.0
-          command: ["/usr/local/bin/xdpl2-daemon"]
+          image: ghcr.io/tsuzu/xdpbridge:v0.1.0
+          command: ["/usr/local/bin/xdpbridge-daemon"]
           envFrom:
             - configMapRef:
-                name: xdpl2-config
+                name: xdpbridge-config
           env:
-            - name: XDPL2_BPFFS
-              value: /sys/fs/bpf/xdpl2
-            - name: XDPL2_SOCKET
-              value: /run/xdpl2/xdpl2.sock
-            - name: XDPL2_STATE_FILE
-              value: /var/lib/xdpl2/state.json
-            - name: XDPL2_PROBE_ADDR
+            - name: XDPBRIDGE_BPFFS
+              value: /sys/fs/bpf/xdpbridge
+            - name: XDPBRIDGE_SOCKET
+              value: /run/xdpbridge/xdpbridge.sock
+            - name: XDPBRIDGE_STATE_FILE
+              value: /var/lib/xdpbridge/state.json
+            - name: XDPBRIDGE_PROBE_ADDR
               value: "127.0.0.1:9967"
             # Used by the optional Kubernetes-API watchdog (deploy/k8s-watch).
-            - name: XDPL2_NODE_NAME
+            - name: XDPBRIDGE_NODE_NAME
               valueFrom:
                 fieldRef:
                   fieldPath: spec.nodeName
@@ -120,9 +120,9 @@ spec:
               mountPath: /sys/fs/bpf
               mountPropagation: HostToContainer
             - name: run
-              mountPath: /run/xdpl2
+              mountPath: /run/xdpbridge
             - name: state
-              mountPath: /var/lib/xdpl2
+              mountPath: /var/lib/xdpbridge
             # Pod network namespaces created by the container runtime. The
             # reconciler reports ports whose netns path it cannot see, so
             # it needs the host's view. HostToContainer propagation makes
@@ -141,11 +141,11 @@ spec:
             type: Directory
         - name: run
           hostPath:
-            path: /run/xdpl2
+            path: /run/xdpbridge
             type: DirectoryOrCreate
         - name: state
           hostPath:
-            path: /var/lib/xdpl2
+            path: /var/lib/xdpbridge
             type: DirectoryOrCreate
         - name: cni-bin
           hostPath:

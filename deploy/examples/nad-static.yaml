@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 #
-# xdpl2 with static IPAM: the pod picks its address (and optionally MAC) in
+# xdpbridge with static IPAM: the pod picks its address (and optionally MAC) in
 # the Multus network-selection annotation. Typical for LAN services such as
 # home automation or mDNS responders that need a fixed address. One NAD for
 # the whole cluster: the uplink is a daemon setting, not part of the NAD.
@@ -15,7 +15,7 @@ spec:
       "cniVersion": "1.0.0",
       "name": "lan-static",
       "plugins": [{
-        "type": "xdpl2",
+        "type": "xdpbridge",
         "capabilities": { "ips": true, "mac": true },
         "ipam": { "type": "static" }
       }]
@@ -33,7 +33,7 @@ spec:
       "cniVersion": "1.0.0",
       "name": "lan-vlan100",
       "plugins": [{
-        "type": "xdpl2",
+        "type": "xdpbridge",
         "vlan": 100,
         "capabilities": { "ips": true },
         "ipam": { "type": "static" }

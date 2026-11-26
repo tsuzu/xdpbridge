@@ -13,7 +13,7 @@ import (
 )
 
 // UplinkPrograms describes what is attached to the uplink, as the kernel
-// reports it (not just what xdpl2 thinks it attached). Program names are
+// reports it (not just what xdpbridge thinks it attached). Program names are
 // the kernel's, truncated to 15 characters.
 type UplinkPrograms struct {
 	XDP        string   `json:"xdp"`               // program name, "" if none

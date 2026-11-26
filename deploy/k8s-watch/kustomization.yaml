@@ -2,7 +2,7 @@
 #
 # Optional overlay: enables the Kubernetes-API watchdog, which cross-checks
 # registered ports against the pods on each node and fails /healthz when a
-# pod runs without its xdpl2 interface.
+# pod runs without its xdpbridge interface.
 #
 #   kubectl apply -k deploy/k8s-watch/
 #

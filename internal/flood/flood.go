@@ -19,7 +19,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// Origins, mirroring enum xdpl2_origin.
+// Origins, mirroring enum xdpbridge_origin.
 const (
 	OriginUplink = 1
 	OriginHost   = 2

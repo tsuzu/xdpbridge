@@ -19,10 +19,10 @@ import (
 // restoreState is persisted in Options.RestoreFile.
 type restoreState struct {
 	Uplink string `json:"uplink"`
-	// PromiscWasOn is the uplink's promiscuous flag before xdpl2 first
+	// PromiscWasOn is the uplink's promiscuous flag before xdpbridge first
 	// attached.
 	PromiscWasOn bool `json:"promiscWasOn"`
-	// OffloadsTurnedOff lists ethtool features xdpl2 switched off.
+	// OffloadsTurnedOff lists ethtool features xdpbridge switched off.
 	OffloadsTurnedOff []string `json:"offloadsTurnedOff,omitempty"`
 
 	recorded bool
@@ -95,7 +95,7 @@ type TeardownReport struct {
 	Warnings []string
 }
 
-// Teardown removes the xdpl2 data path from the node: it detaches every
+// Teardown removes the xdpbridge data path from the node: it detaches every
 // pinned link (uplink XDP, uplink TCX egress, all port TCX links), removes
 // all pins below pinDir, and restores the uplink's promiscuous mode and VLAN
 // offloads from restoreFile. It is idempotent. The daemon must not be

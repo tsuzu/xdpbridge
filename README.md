@@ -1,9 +1,9 @@
-# xdpl2
+# xdpbridge
 
 **An XDP L2 switch and CNI plugin that puts Kubernetes pods directly on the
 LAN without macvlan.**
 
-xdpl2 attaches pods to the LAN segment behind a node's physical NIC. One NIC
+xdpbridge attaches pods to the LAN segment behind a node's physical NIC. One NIC
 fans out to many pods through a small switch built from BPF programs: XDP on
 the NIC, TCX on per-pod veths, and a userspace helper for broadcast and
 multicast. It works as a [Multus](https://github.com/k8snetworkplumbingwg/multus-cni)
@@ -16,7 +16,7 @@ delegate plugin and runs alongside Cilium.
 
 ## Why not macvlan?
 
-| Problem with macvlan | xdpl2 |
+| Problem with macvlan | xdpbridge |
 |---|---|
 | The host and same-node pods cannot reach a macvlan child (the parent cannot talk to its own children). Workarounds need a host-side macvlan shim, which is awkward on immutable OSes. | The host stack is a switch port. Host↔pod and pod↔pod traffic on the same node is switched locally. |
 | Per-pod child interfaces on the NIC; hairpin and unicast quirks that differ per driver and bridge/VLAN topology. | Pods attach through plain veth pairs. The NIC only runs one XDP program and is put in promiscuous mode. |
@@ -31,7 +31,7 @@ flowchart LR
   subgraph node[Node]
     NIC["uplink NIC<br/>XDP xdp_uplink<br/>TCX egress tc_uplink_egress"]
     HOST[host stack<br/>port 0]
-    DAEMON[xdpl2-daemon<br/>API · reconciler · flood replicator]
+    DAEMON[xdpbridge-daemon<br/>API · reconciler · flood replicator]
     VA["veth xl…<br/>TCX ingress tc_port_ingress"]
     VB["veth xl…<br/>TCX ingress tc_port_ingress"]
     NIC -- "not for a pod: XDP_PASS" --> HOST
@@ -45,7 +45,7 @@ flowchart LR
   end
   VA --- PA[pod A]
   VB --- PB[pod B]
-  CNI[xdpl2 CNI plugin] -- "unix socket: register port" --> DAEMON
+  CNI[xdpbridge CNI plugin] -- "unix socket: register port" --> DAEMON
 ```
 
 * **Unicast** is switched entirely in BPF by destination MAC (+ VLAN):
@@ -71,7 +71,7 @@ The full data path, map layout, flood design and failure modes are in
 * A NIC with native XDP (e.g. `i40e`, `ice`, `mlx5`, `atlantic`) for full
   speed. Any NIC works in generic (SKB) mode, for example `r8169` or
   `e1000e`; the daemon falls back automatically.
-* The uplink XDP hook must be free. xdpl2 refuses to replace another XDP
+* The uplink XDP hook must be free. xdpbridge refuses to replace another XDP
   program unless started with `--force-xdp`.
 * Multus (thin or thick) for Kubernetes integration. An IPAM plugin
   (`host-local`, `static`, `whereabouts`, …) must be present in
@@ -81,7 +81,7 @@ The full data path, map layout, flood design and failure modes are in
   `/var/run` a symlink to `/run`, as on Talos). The DaemonSet mounts it so
   the reconciler can see them; adjust the `netns` hostPath otherwise.
 * With Multus thick, keep its default `chrootDir`. The plugin then runs
-  against the host root and reaches the daemon socket at `/run/xdpl2`.
+  against the host root and reaches the daemon socket at `/run/xdpbridge`.
   Verified on Talos, which ships `host-local` and the other reference
   plugins in `/opt/cni/bin`.
 
@@ -91,23 +91,23 @@ The full data path, map layout, flood design and failure modes are in
    `deploy/daemonset.yaml`:
 
    ```sh
-   make image IMAGE=registry.example/xdpl2:v0.1.0
-   docker push registry.example/xdpl2:v0.1.0
+   make image IMAGE=registry.example/xdpbridge:v0.1.0
+   docker push registry.example/xdpbridge:v0.1.0
    ```
 
-2. Pick the uplink in the `xdpl2-config` ConfigMap (`XDPL2_UPLINK`). It can
+2. Pick the uplink in the `xdpbridge-config` ConfigMap (`XDPBRIDGE_UPLINK`). It can
    be an interface name, a comma-separated candidate list where the first
    existing interface wins (`enp1s0f0,eno1`), or `default-route`.
 
-3. Label the nodes that should run xdpl2, then apply the manifests:
+3. Label the nodes that should run xdpbridge, then apply the manifests:
 
    ```sh
-   kubectl label node <node> xdpl2/enabled=true
+   kubectl label node <node> xdpbridge/enabled=true
    kubectl apply -k deploy/
-   kubectl -n xdpl2-system get pods -o wide
+   kubectl -n xdpbridge-system get pods -o wide
    ```
 
-   The init container installs the plugin as `/opt/cni/bin/xdpl2`. The
+   The init container installs the plugin as `/opt/cni/bin/xdpbridge`. The
    daemon pod becomes Ready once XDP is attached and `/healthz` is OK.
 
 4. Create a NetworkAttachmentDefinition and attach pods to it (below).
@@ -115,8 +115,8 @@ The full data path, map layout, flood design and failure modes are in
 Check a node:
 
 ```sh
-kubectl -n xdpl2-system exec ds/xdpl2 -- /usr/local/bin/xdpl2-daemon status
-kubectl -n xdpl2-system exec ds/xdpl2 -- /usr/local/bin/xdpl2-daemon ports
+kubectl -n xdpbridge-system exec ds/xdpbridge -- /usr/local/bin/xdpbridge-daemon status
+kubectl -n xdpbridge-system exec ds/xdpbridge -- /usr/local/bin/xdpbridge-daemon ports
 ```
 
 ### Multus NetworkAttachmentDefinition example
@@ -135,7 +135,7 @@ spec:
       "cniVersion": "1.0.0",
       "name": "lan-static",
       "plugins": [{
-        "type": "xdpl2",
+        "type": "xdpbridge",
         "capabilities": { "ips": true, "mac": true },
         "ipam": { "type": "static" }
       }]
@@ -150,7 +150,7 @@ metadata:
       [{ "name": "lan-static", "interface": "net1",
          "ips": ["192.0.2.50/24"], "mac": "02:00:00:00:00:50" }]
 spec:
-  nodeSelector: { xdpl2/enabled: "true" }
+  nodeSelector: { xdpbridge/enabled: "true" }
   containers:
     - { name: demo, image: busybox:1.36, command: ["sleep", "infinity"] }
 ```
@@ -163,12 +163,12 @@ disjoint range or use a cluster-wide IPAM.
 
 | Key | Default | Meaning |
 |---|---|---|
-| `type` | — | `xdpl2` |
+| `type` | — | `xdpbridge` |
 | `ipam` | none | Delegated IPAM plugin config. Without it the interface is brought up with no address (e.g. for DHCP inside the pod). |
 | `vlan` | `0` | Access VLAN (1–4094). Frames are tagged on the uplink and untagged toward the pod. |
 | `mtu` | kernel default | MTU of the veth pair |
 | `mac` / `runtimeConfig.mac` / `args.cni.mac` / `CNI_ARGS MAC=` | random locally administered | Pod MAC. The `mac` capability takes precedence. |
-| `socket` | `/run/xdpl2/xdpl2.sock` | Daemon socket |
+| `socket` | `/run/xdpbridge/xdpbridge.sock` | Daemon socket |
 | `timeoutSeconds` | `10` | Daemon request timeout |
 
 ### Daemon flags
@@ -177,23 +177,23 @@ Every flag can also be set through an environment variable:
 
 | Flag | Env | Default |
 |---|---|---|
-| `--uplink` | `XDPL2_UPLINK` | (required) name, list, or `default-route` |
-| `--xdp-mode` | `XDPL2_XDP_MODE` | `auto` (native, then generic) |
-| `--force-xdp` | `XDPL2_FORCE_XDP` | `false` |
-| `--bpffs` | `XDPL2_BPFFS` | `/sys/fs/bpf/xdpl2` |
-| `--socket` | `XDPL2_SOCKET` | `/run/xdpl2/xdpl2.sock` |
-| `--state-file` | `XDPL2_STATE_FILE` | `/var/lib/xdpl2/state.json` |
-| `--probe-addr` | `XDPL2_PROBE_ADDR` | `127.0.0.1:9967` (`/healthz`, `/livez`, `/metrics`) |
+| `--uplink` | `XDPBRIDGE_UPLINK` | (required) name, list, or `default-route` |
+| `--xdp-mode` | `XDPBRIDGE_XDP_MODE` | `auto` (native, then generic) |
+| `--force-xdp` | `XDPBRIDGE_FORCE_XDP` | `false` |
+| `--bpffs` | `XDPBRIDGE_BPFFS` | `/sys/fs/bpf/xdpbridge` |
+| `--socket` | `XDPBRIDGE_SOCKET` | `/run/xdpbridge/xdpbridge.sock` |
+| `--state-file` | `XDPBRIDGE_STATE_FILE` | `/var/lib/xdpbridge/state.json` |
+| `--probe-addr` | `XDPBRIDGE_PROBE_ADDR` | `127.0.0.1:9967` (`/healthz`, `/livez`, `/metrics`) |
 | `--reconcile-interval` | — | `10s` |
-| `--log-level`, `--log-format` | `XDPL2_LOG_LEVEL`, `XDPL2_LOG_FORMAT` | `info`, `json` |
+| `--log-level`, `--log-format` | `XDPBRIDGE_LOG_LEVEL`, `XDPBRIDGE_LOG_FORMAT` | `info`, `json` |
 
 ### Kubernetes-API watchdog (optional)
 
 `kubectl apply -k deploy/k8s-watch/` instead of `deploy/` enables a
 cross-check of registered ports against the pods on each node. A running
-pod whose xdpl2 attachment has no port, or a port without its pod, then
-fails `/healthz` and shows up in `xdpl2_k8s_missing_ports` /
-`xdpl2_k8s_orphan_ports`. The overlay adds read-only RBAC for pods and NADs
+pod whose xdpbridge attachment has no port, or a port without its pod, then
+fails `/healthz` and shows up in `xdpbridge_k8s_missing_ports` /
+`xdpbridge_k8s_orphan_ports`. The overlay adds read-only RBAC for pods and NADs
 and mounts the ServiceAccount token. The base deployment mounts no token.
 
 ### Validating a node
@@ -204,50 +204,50 @@ daemon is healthy, and the pins are present:
 
 ```sh
 # on the node (privileged hostNetwork pod with ip/bpftool):
-XDPL2_UPLINK=eth1 hack/validate-node.sh
+XDPBRIDGE_UPLINK=eth1 hack/validate-node.sh
 # from a workstation, through the node's daemon pod:
-KUBECTL="kubectl --context my-cluster" XDPL2_NODE=<node> hack/validate-node.sh
+KUBECTL="kubectl --context my-cluster" XDPBRIDGE_NODE=<node> hack/validate-node.sh
 ```
 
-Set `XDPL2_EXPECT_TCX=""` on clusters without Cilium. The header of the
+Set `XDPBRIDGE_EXPECT_TCX=""` on clusters without Cilium. The header of the
 script lists all settings.
 
 ### Uninstall
 
 Stopping or deleting the daemon **does not** remove the data path. Pinned
-links keep forwarding, so that restarts are hitless. To remove xdpl2 from a
+links keep forwarding, so that restarts are hitless. To remove xdpbridge from a
 node, delete the DaemonSet (or unlabel the node), then run on the node:
 
 ```sh
-xdpl2-daemon teardown        # --bpffs/--state-file if not default
+xdpbridge-daemon teardown        # --bpffs/--state-file if not default
 ```
 
 It detaches every pinned XDP/TCX link, removes the pins under
-`/sys/fs/bpf/xdpl2`, restores the uplink's promiscuous mode and VLAN
+`/sys/fs/bpf/xdpbridge`, restores the uplink's promiscuous mode and VLAN
 offloads, verifies that no XDP program remains, and refuses to run while a
 daemon is still serving.
 
 ## Coexistence with Cilium
 
-xdpl2 was designed next to Cilium in tunnel mode with kube-proxy
+xdpbridge was designed next to Cilium in tunnel mode with kube-proxy
 replacement and `bpf-lb-acceleration: disabled`, the default, which leaves
 the NIC's XDP hook empty.
 
-* xdpl2 owns the uplink **XDP** slot. Frames that are not for an xdpl2 pod
+* xdpbridge owns the uplink **XDP** slot. Frames that are not for an xdpbridge pod
   get `XDP_PASS` and reach Cilium's TCX ingress program unchanged. Do not
   enable Cilium's XDP acceleration on the same NIC. The daemon refuses to
   start if it finds a foreign XDP program.
-* xdpl2 adds one program at the head of the uplink's **TCX egress** chain.
-  It only redirects host→xdpl2-pod frames and returns `TCX_NEXT` for
+* xdpbridge adds one program at the head of the uplink's **TCX egress** chain.
+  It only redirects host→xdpbridge-pod frames and returns `TCX_NEXT` for
   everything else.
-* xdpl2 pod veths are not Cilium endpoints. Traffic between xdpl2 pods and
+* xdpbridge pod veths are not Cilium endpoints. Traffic between xdpbridge pods and
   the LAN or host bypasses Cilium network policy and the host firewall,
   just as with macvlan. Use pod-level firewalls if you need filtering on
   the secondary network.
 
 ## Limitations (v0.1)
 
-* **No multi-program XDP.** xdpl2 needs the uplink XDP hook to itself
+* **No multi-program XDP.** xdpbridge needs the uplink XDP hook to itself
   (libxdp dispatcher support is future work).
 * **Multicast is flooded** to every port on the VLAN (no IGMP/MLD snooping).
   Receivers filter by group membership. Fine for mDNS/SSDP volumes, not for
@@ -261,7 +261,7 @@ the NIC's XDP hook empty.
   offload is turned off. If the driver cannot turn it off, tagged traffic
   for VLAN ports is not switched (warning logged).
 * A port cannot reach a **macvlan** endpoint on the same node (the
-  physical switch does not hairpin). Migrating that workload to xdpl2
+  physical switch does not hairpin). Migrating that workload to xdpbridge
   resolves it. See docs/design.md.
 * **IPv6**: ND/MLD work through the flood path, and link-local ping is
   tested. There is no ND proxying or MLD snooping, and IPv6 coverage is
@@ -277,8 +277,8 @@ Toolchain: Go (version in `go.mod`), clang/LLVM, libbpf headers
 ethtool and python3.
 
 ```sh
-make generate      # compile bpf/xdpl2.bpf.c and generate Go bindings (bpf2go)
-make build         # bin/xdpl2-daemon, bin/xdpl2-cni, bin/host-local (test IPAM)
+make generate      # compile bpf/xdpbridge.bpf.c and generate Go bindings (bpf2go)
+make build         # bin/xdpbridge-daemon, bin/xdpbridge-cni, bin/host-local (test IPAM)
 make test          # go vet, gofmt check, unit tests (-race)
 sudo make integration   # netns integration test, native + generic XDP; rewrites TESTLOG.md
 hack/check-hygiene.sh   # SPDX headers, no non-documentation addresses
@@ -290,7 +290,7 @@ topology from network namespaces:
 ```
 ext (LAN host, 192.0.2.100; VLAN 100: 198.51.100.100)
  └─ ext0 ═══ uplink0  (stands in for the physical NIC)
-             node ns: 192.0.2.1, xdpl2-daemon, CNI plugin
+             node ns: 192.0.2.1, xdpbridge-daemon, CNI plugin
               ├─ xl… ═══ eth1  pod1 ┐
               ├─ xl… ═══ eth1  pod2 ├ untagged, host-local 192.0.2.10-19
               ├─ xl… ═══ eth1  pod3 ┘
@@ -310,8 +310,8 @@ Repository layout:
 
 ```
 bpf/                 BPF C sources (dual GPL-2.0/BSD-2-Clause)
-cmd/xdpl2-daemon/    node daemon
-cmd/xdpl2-cni/       CNI plugin
+cmd/xdpbridge-daemon/    node daemon
+cmd/xdpbridge-cni/       CNI plugin
 internal/bpfobj/     bpf2go bindings (generated, not committed)
 internal/datapath/   load/attach/pin, map access
 internal/flood/      flood replication (ring buffer → AF_PACKET)
@@ -327,10 +327,10 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) before sending changes.
 
 ## Versioning and license
 
-xdpl2 follows [Semantic Versioning](https://semver.org/). Until 1.0.0 the
+xdpbridge follows [Semantic Versioning](https://semver.org/). Until 1.0.0 the
 daemon API, CNI configuration and pinned map layout may change in minor
 releases; each change will be called out in release notes. After an
-upgrade that changes the map layout, run `xdpl2-daemon teardown` before
+upgrade that changes the map layout, run `xdpbridge-daemon teardown` before
 restarting.
 
 Userspace code is licensed under the [Apache License 2.0](LICENSE). The BPF

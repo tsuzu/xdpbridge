@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-// Package daemon implements the xdpl2 node daemon: the port registry, its
+// Package daemon implements the xdpbridge node daemon: the port registry, its
 // HTTP API, persistence and the reconciliation loop.
 package daemon
 
@@ -19,10 +19,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/tsuzu/xdpl2/internal/api"
-	"github.com/tsuzu/xdpl2/internal/datapath"
-	"github.com/tsuzu/xdpl2/internal/flood"
-	"github.com/tsuzu/xdpl2/internal/k8swatch"
+	"github.com/tsuzu/xdpbridge/internal/api"
+	"github.com/tsuzu/xdpbridge/internal/datapath"
+	"github.com/tsuzu/xdpbridge/internal/flood"
+	"github.com/tsuzu/xdpbridge/internal/k8swatch"
 )
 
 // Dataplane is the subset of *datapath.Datapath the server needs; it is an
@@ -532,7 +532,7 @@ func (s *Server) Reconcile() {
 	}
 	sort.Strings(unregistered)
 	for _, n := range unregistered {
-		s.log.Error("WATCHDOG: host veth has no port registration; its pod has no working xdpl2 interface", "host_if", n)
+		s.log.Error("WATCHDOG: host veth has no port registration; its pod has no working xdpbridge interface", "host_if", n)
 		problems = append(problems, "unregistered veth "+n)
 	}
 
@@ -597,7 +597,7 @@ func (s *Server) k8sCheckLocked() []string {
 	}
 	res := k8swatch.CrossCheck(snap, refs, s.cfg.Now(), s.cfg.K8sGrace)
 	s.k8s = &api.K8sStatus{
-		Node: s.cfg.NodeName, Synced: snap.Synced, XDPL2NADs: snap.XDPL2NADs,
+		Node: s.cfg.NodeName, Synced: snap.Synced, XDPBRIDGENADs: snap.XDPBRIDGENADs,
 		PodsExpected: len(snap.Expected), PodsChecked: res.Checked,
 		MissingPorts: res.MissingPorts, OrphanPorts: res.OrphanPorts,
 	}
@@ -606,7 +606,7 @@ func (s *Server) k8sCheckLocked() []string {
 		problems = append(problems, "k8s watchdog: not synced with the API server yet")
 	}
 	for _, m := range res.MissingPorts {
-		s.log.Error("WATCHDOG(k8s): pod is running without its xdpl2 interface", "detail", m)
+		s.log.Error("WATCHDOG(k8s): pod is running without its xdpbridge interface", "detail", m)
 		problems = append(problems, m)
 	}
 	for _, o := range res.OrphanPorts {

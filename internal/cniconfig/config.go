@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-// Package cniconfig parses and validates the xdpl2 CNI network configuration.
+// Package cniconfig parses and validates the xdpbridge CNI network configuration.
 package cniconfig
 
 import (
@@ -14,7 +14,7 @@ import (
 	"github.com/containernetworking/cni/pkg/types"
 	"github.com/containernetworking/cni/pkg/version"
 
-	"github.com/tsuzu/xdpl2/internal/api"
+	"github.com/tsuzu/xdpbridge/internal/api"
 )
 
 // NetConf is the plugin configuration.
@@ -22,8 +22,8 @@ import (
 //	{
 //	  "cniVersion": "1.0.0",
 //	  "name": "lan",
-//	  "type": "xdpl2",
-//	  "socket": "/run/xdpl2/xdpl2.sock",   // optional
+//	  "type": "xdpbridge",
+//	  "socket": "/run/xdpbridge/xdpbridge.sock",   // optional
 //	  "vlan": 0,                            // optional access VLAN
 //	  "mtu": 1500,                          // optional
 //	  "timeoutSeconds": 10,                 // optional daemon timeout

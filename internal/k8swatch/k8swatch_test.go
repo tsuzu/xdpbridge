@@ -45,15 +45,15 @@ func TestParseNetworks(t *testing.T) {
 	}
 }
 
-func TestIsXdpl2Config(t *testing.T) {
+func TestIsXdpbridgeConfig(t *testing.T) {
 	cases := map[string]bool{
-		`{"cniVersion":"1.0.0","name":"a","type":"xdpl2"}`:                                 true,
-		`{"cniVersion":"1.0.0","name":"a","plugins":[{"type":"xdpl2"},{"type":"tuning"}]}`: true,
-		`{"cniVersion":"1.0.0","name":"a","type":"macvlan"}`:                               false,
+		`{"cniVersion":"1.0.0","name":"a","type":"xdpbridge"}`:                                 true,
+		`{"cniVersion":"1.0.0","name":"a","plugins":[{"type":"xdpbridge"},{"type":"tuning"}]}`: true,
+		`{"cniVersion":"1.0.0","name":"a","type":"macvlan"}`:                                   false,
 		`not json`: false,
 	}
 	for in, want := range cases {
-		if got := IsXdpl2Config(in, "xdpl2"); got != want {
+		if got := IsXdpbridgeConfig(in, "xdpbridge"); got != want {
 			t.Errorf("%s: got %v", in, got)
 		}
 	}
@@ -88,9 +88,9 @@ func TestCrossCheck(t *testing.T) {
 		t.Errorf("checked %d pods, want 4", r.Checked)
 	}
 	want := []string{
-		"pod app/missing (Running) has no xdpl2 port for network app/lan",
-		"pod app/named (Running) has no xdpl2 port for network app/lan interface net2",
-		"pod app/two (Running) has no xdpl2 port for network app/lan2",
+		"pod app/missing (Running) has no xdpbridge port for network app/lan",
+		"pod app/named (Running) has no xdpbridge port for network app/lan interface net2",
+		"pod app/two (Running) has no xdpbridge port for network app/lan2",
 	}
 	if fmt.Sprint(r.MissingPorts) != fmt.Sprint(want) {
 		t.Errorf("missing:\n got %q\nwant %q", r.MissingPorts, want)
@@ -194,7 +194,7 @@ func eventually(t *testing.T, cond func() bool, what string) {
 func TestWatcherListWatch(t *testing.T) {
 	api := &fakeAPI{t: t, token: "tok-1", events: make(chan string, 10), rv: 5,
 		nads: `{"items":[
-		  {"metadata":{"namespace":"app","name":"lan"},"spec":{"config":"{\"cniVersion\":\"1.0.0\",\"name\":\"lan\",\"type\":\"xdpl2\"}"}},
+		  {"metadata":{"namespace":"app","name":"lan"},"spec":{"config":"{\"cniVersion\":\"1.0.0\",\"name\":\"lan\",\"type\":\"xdpbridge\"}"}},
 		  {"metadata":{"namespace":"app","name":"mv"},"spec":{"config":"{\"cniVersion\":\"1.0.0\",\"name\":\"mv\",\"type\":\"macvlan\"}"}}]}`,
 		pods: []Pod{pod("app", "a", "Running", "lan"), pod("app", "b", "Running", "mv"), pod("app", "c", "Running", "")},
 	}
@@ -214,11 +214,11 @@ func TestWatcherListWatch(t *testing.T) {
 
 	eventually(t, func() bool { return w.Snapshot().Synced }, "sync")
 	s := w.Snapshot()
-	if len(s.Expected) != 1 || s.Expected[0].Name != "a" || s.XDPL2NADs != 1 || len(s.LivePods) != 3 {
+	if len(s.Expected) != 1 || s.Expected[0].Name != "a" || s.XDPBRIDGENADs != 1 || len(s.LivePods) != 3 {
 		t.Fatalf("snapshot after list: %+v", s)
 	}
 
-	// Watch: a new xdpl2 pod arrives, "a" is deleted.
+	// Watch: a new xdpbridge pod arrives, "a" is deleted.
 	api.events <- event("ADDED", pod("app", "d", "Pending", `[{"name":"lan","interface":"net1"}]`))
 	api.events <- event("DELETED", pod("app", "a", "Running", "lan"))
 	eventually(t, func() bool {

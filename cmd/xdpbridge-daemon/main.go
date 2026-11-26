@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
-// Command xdpl2-daemon is the xdpl2 node daemon. It owns the uplink XDP hook
+// Command xdpbridge-daemon is the xdpbridge node daemon. It owns the uplink XDP hook
 // and the forwarding maps, replicates flood traffic and serves the CNI
 // plugin on a unix socket.
 //
 // Usage:
 //
-//	xdpl2-daemon [flags]          run the daemon
-//	xdpl2-daemon status [flags]   print daemon status (JSON)
-//	xdpl2-daemon ports [flags]    list registered ports (JSON)
-//	xdpl2-daemon teardown [flags] detach programs and remove all pins
-//	xdpl2-daemon install-cni --src <file> --dest <dir>
+//	xdpbridge-daemon [flags]          run the daemon
+//	xdpbridge-daemon status [flags]   print daemon status (JSON)
+//	xdpbridge-daemon ports [flags]    list registered ports (JSON)
+//	xdpbridge-daemon teardown [flags] detach programs and remove all pins
+//	xdpbridge-daemon install-cni --src <file> --dest <dir>
 //	                              copy the CNI plugin binary atomically
 //	                              (used by the DaemonSet init container)
 package main
@@ -34,12 +34,12 @@ import (
 
 	"github.com/vishvananda/netlink"
 
-	"github.com/tsuzu/xdpl2/internal/api"
-	"github.com/tsuzu/xdpl2/internal/daemon"
-	"github.com/tsuzu/xdpl2/internal/datapath"
-	"github.com/tsuzu/xdpl2/internal/flood"
-	"github.com/tsuzu/xdpl2/internal/k8swatch"
-	"github.com/tsuzu/xdpl2/internal/version"
+	"github.com/tsuzu/xdpbridge/internal/api"
+	"github.com/tsuzu/xdpbridge/internal/daemon"
+	"github.com/tsuzu/xdpbridge/internal/datapath"
+	"github.com/tsuzu/xdpbridge/internal/flood"
+	"github.com/tsuzu/xdpbridge/internal/k8swatch"
+	"github.com/tsuzu/xdpbridge/internal/version"
 )
 
 type options struct {
@@ -62,22 +62,22 @@ func envOr(key, def string) string {
 
 func parseFlags(fs *flag.FlagSet, args []string) (*options, error) {
 	o := &options{}
-	fs.StringVar(&o.uplink, "uplink", envOr("XDPL2_UPLINK", ""), "uplink interface: a name, a comma-separated list (first existing wins), or \"default-route\" [XDPL2_UPLINK]")
-	fs.StringVar(&o.bpffs, "bpffs", envOr("XDPL2_BPFFS", "/sys/fs/bpf/xdpl2"), "bpffs directory for pinned maps and links [XDPL2_BPFFS]")
-	fs.StringVar(&o.socket, "socket", envOr("XDPL2_SOCKET", api.DefaultSocket), "unix socket for the API [XDPL2_SOCKET]")
-	fs.StringVar(&o.stateFile, "state-file", envOr("XDPL2_STATE_FILE", "/var/lib/xdpl2/state.json"), "port registration state file [XDPL2_STATE_FILE]")
-	fs.StringVar(&o.xdpMode, "xdp-mode", envOr("XDPL2_XDP_MODE", "auto"), "XDP attach mode: auto, native or generic [XDPL2_XDP_MODE]")
-	fs.BoolVar(&o.forceXDP, "force-xdp", os.Getenv("XDPL2_FORCE_XDP") == "true", "replace a foreign XDP program on the uplink [XDPL2_FORCE_XDP]")
-	fs.StringVar(&o.probeAddr, "probe-addr", envOr("XDPL2_PROBE_ADDR", "127.0.0.1:9967"), "TCP address for /healthz, /livez, /metrics (empty disables) [XDPL2_PROBE_ADDR]")
-	fs.BoolVar(&o.k8sWatch, "k8s-watch", os.Getenv("XDPL2_K8S_WATCH") == "true", "cross-check registrations against pods on this node via the Kubernetes API (needs a ServiceAccount token) [XDPL2_K8S_WATCH]")
-	fs.StringVar(&o.nodeName, "node-name", envOr("XDPL2_NODE_NAME", ""), "this node's Kubernetes name, for --k8s-watch [XDPL2_NODE_NAME]")
+	fs.StringVar(&o.uplink, "uplink", envOr("XDPBRIDGE_UPLINK", ""), "uplink interface: a name, a comma-separated list (first existing wins), or \"default-route\" [XDPBRIDGE_UPLINK]")
+	fs.StringVar(&o.bpffs, "bpffs", envOr("XDPBRIDGE_BPFFS", "/sys/fs/bpf/xdpbridge"), "bpffs directory for pinned maps and links [XDPBRIDGE_BPFFS]")
+	fs.StringVar(&o.socket, "socket", envOr("XDPBRIDGE_SOCKET", api.DefaultSocket), "unix socket for the API [XDPBRIDGE_SOCKET]")
+	fs.StringVar(&o.stateFile, "state-file", envOr("XDPBRIDGE_STATE_FILE", "/var/lib/xdpbridge/state.json"), "port registration state file [XDPBRIDGE_STATE_FILE]")
+	fs.StringVar(&o.xdpMode, "xdp-mode", envOr("XDPBRIDGE_XDP_MODE", "auto"), "XDP attach mode: auto, native or generic [XDPBRIDGE_XDP_MODE]")
+	fs.BoolVar(&o.forceXDP, "force-xdp", os.Getenv("XDPBRIDGE_FORCE_XDP") == "true", "replace a foreign XDP program on the uplink [XDPBRIDGE_FORCE_XDP]")
+	fs.StringVar(&o.probeAddr, "probe-addr", envOr("XDPBRIDGE_PROBE_ADDR", "127.0.0.1:9967"), "TCP address for /healthz, /livez, /metrics (empty disables) [XDPBRIDGE_PROBE_ADDR]")
+	fs.BoolVar(&o.k8sWatch, "k8s-watch", os.Getenv("XDPBRIDGE_K8S_WATCH") == "true", "cross-check registrations against pods on this node via the Kubernetes API (needs a ServiceAccount token) [XDPBRIDGE_K8S_WATCH]")
+	fs.StringVar(&o.nodeName, "node-name", envOr("XDPBRIDGE_NODE_NAME", ""), "this node's Kubernetes name, for --k8s-watch [XDPBRIDGE_NODE_NAME]")
 	fs.DurationVar(&o.k8sGrace, "k8s-grace", time.Minute, "how long a pod may run without its port (or a port exist without its pod) before it is reported")
 	fs.BoolVar(&o.force, "force", false, "teardown: proceed even if a daemon answers on --socket")
-	fs.StringVar(&o.installSrc, "src", "/usr/local/bin/xdpl2-cni", "install-cni: plugin binary to copy")
-	fs.StringVar(&o.installDest, "dest", envOr("XDPL2_CNI_BIN_DIR", "/host/opt/cni/bin"), "install-cni: CNI bin directory as mounted in the container [XDPL2_CNI_BIN_DIR]")
+	fs.StringVar(&o.installSrc, "src", "/usr/local/bin/xdpbridge-cni", "install-cni: plugin binary to copy")
+	fs.StringVar(&o.installDest, "dest", envOr("XDPBRIDGE_CNI_BIN_DIR", "/host/opt/cni/bin"), "install-cni: CNI bin directory as mounted in the container [XDPBRIDGE_CNI_BIN_DIR]")
 	fs.DurationVar(&o.reconcile, "reconcile-interval", 10*time.Second, "reconciliation interval")
-	fs.StringVar(&o.logLevel, "log-level", envOr("XDPL2_LOG_LEVEL", "info"), "debug, info, warn, error [XDPL2_LOG_LEVEL]")
-	fs.StringVar(&o.logFormat, "log-format", envOr("XDPL2_LOG_FORMAT", "json"), "json or text [XDPL2_LOG_FORMAT]")
+	fs.StringVar(&o.logLevel, "log-level", envOr("XDPBRIDGE_LOG_LEVEL", "info"), "debug, info, warn, error [XDPBRIDGE_LOG_LEVEL]")
+	fs.StringVar(&o.logFormat, "log-format", envOr("XDPBRIDGE_LOG_FORMAT", "json"), "json or text [XDPBRIDGE_LOG_FORMAT]")
 	return o, fs.Parse(args)
 }
 
@@ -99,7 +99,7 @@ func main() {
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
 		cmd, args = args[0], args[1:]
 	}
-	fs := flag.NewFlagSet("xdpl2-daemon "+cmd, flag.ExitOnError)
+	fs := flag.NewFlagSet("xdpbridge-daemon "+cmd, flag.ExitOnError)
 	o, _ := parseFlags(fs, args)
 
 	var err error
@@ -120,7 +120,7 @@ func main() {
 		err = fmt.Errorf("unknown command %q", cmd)
 	}
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "xdpl2-daemon:", err)
+		fmt.Fprintln(os.Stderr, "xdpbridge-daemon:", err)
 		os.Exit(1)
 	}
 }
@@ -135,7 +135,7 @@ func printJSON(f func(*api.Client) (any, error), o *options) error {
 	return enc.Encode(v)
 }
 
-// restoreFile is where the uplink's pre-xdpl2 settings are recorded.
+// restoreFile is where the uplink's pre-xdpbridge settings are recorded.
 func restoreFile(o *options) string {
 	if o.stateFile == "" {
 		return ""
@@ -184,7 +184,7 @@ func installCNI(src, destDir string) error {
 	if err := os.MkdirAll(destDir, 0o755); err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(destDir, ".xdpl2-cni-")
+	tmp, err := os.CreateTemp(destDir, ".xdpbridge-cni-")
 	if err != nil {
 		return err
 	}
@@ -201,10 +201,10 @@ func installCNI(src, destDir string) error {
 		return err
 	}
 	// rename(2) is atomic: kubelet never executes a half-written plugin.
-	if err := os.Rename(tmp.Name(), filepath.Join(destDir, "xdpl2")); err != nil {
+	if err := os.Rename(tmp.Name(), filepath.Join(destDir, "xdpbridge")); err != nil {
 		return err
 	}
-	fmt.Println("installed", filepath.Join(destDir, "xdpl2"))
+	fmt.Println("installed", filepath.Join(destDir, "xdpbridge"))
 	return nil
 }
 
@@ -249,7 +249,7 @@ func run(o *options) error {
 	if err != nil {
 		return err
 	}
-	log.Info("starting xdpl2-daemon", "version", version.Version, "uplink", uplink, "bpffs", o.bpffs, "xdp_mode", mode)
+	log.Info("starting xdpbridge-daemon", "version", version.Version, "uplink", uplink, "bpffs", o.bpffs, "xdp_mode", mode)
 
 	dp, err := datapath.Open(datapath.Options{
 		Uplink: uplink, PinDir: o.bpffs, Mode: mode, ForceXDP: o.forceXDP, Logger: log,
@@ -264,7 +264,7 @@ func run(o *options) error {
 	defer cancelWatch()
 	var k8s daemon.K8sSource
 	if o.k8sWatch {
-		w, err := k8swatch.New(k8swatch.Config{NodeName: o.nodeName, PluginType: "xdpl2", Logger: log})
+		w, err := k8swatch.New(k8swatch.Config{NodeName: o.nodeName, PluginType: "xdpbridge", Logger: log})
 		if err != nil {
 			return err
 		}

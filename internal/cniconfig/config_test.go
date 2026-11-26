@@ -6,11 +6,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tsuzu/xdpl2/internal/api"
+	"github.com/tsuzu/xdpbridge/internal/api"
 )
 
 func TestParseDefaults(t *testing.T) {
-	conf, _, err := Parse([]byte(`{"cniVersion":"1.0.0","name":"lan","type":"xdpl2"}`), "")
+	conf, _, err := Parse([]byte(`{"cniVersion":"1.0.0","name":"lan","type":"xdpbridge"}`), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -24,7 +24,7 @@ func TestParseDefaults(t *testing.T) {
 
 func TestParseFull(t *testing.T) {
 	in := `{
-	  "cniVersion": "1.0.0", "name": "lan", "type": "xdpl2",
+	  "cniVersion": "1.0.0", "name": "lan", "type": "xdpbridge",
 	  "socket": "/tmp/x.sock", "vlan": 100, "mtu": 1400, "timeoutSeconds": 3,
 	  "ipam": {"type": "host-local", "ranges": [[{"subnet": "192.0.2.0/24"}]]}
 	}`
@@ -43,12 +43,12 @@ func TestParseFull(t *testing.T) {
 func TestParseErrors(t *testing.T) {
 	cases := map[string]string{
 		"bad json":      `{`,
-		"vlan too big":  `{"cniVersion":"1.0.0","name":"n","type":"xdpl2","vlan":4095}`,
-		"vlan negative": `{"cniVersion":"1.0.0","name":"n","type":"xdpl2","vlan":-1}`,
-		"mtu too small": `{"cniVersion":"1.0.0","name":"n","type":"xdpl2","mtu":10}`,
-		"bad mac":       `{"cniVersion":"1.0.0","name":"n","type":"xdpl2","runtimeConfig":{"mac":"zz"}}`,
-		"multicast mac": `{"cniVersion":"1.0.0","name":"n","type":"xdpl2","runtimeConfig":{"mac":"01:00:5e:00:00:01"}}`,
-		"timeout":       `{"cniVersion":"1.0.0","name":"n","type":"xdpl2","timeoutSeconds":-2}`,
+		"vlan too big":  `{"cniVersion":"1.0.0","name":"n","type":"xdpbridge","vlan":4095}`,
+		"vlan negative": `{"cniVersion":"1.0.0","name":"n","type":"xdpbridge","vlan":-1}`,
+		"mtu too small": `{"cniVersion":"1.0.0","name":"n","type":"xdpbridge","mtu":10}`,
+		"bad mac":       `{"cniVersion":"1.0.0","name":"n","type":"xdpbridge","runtimeConfig":{"mac":"zz"}}`,
+		"multicast mac": `{"cniVersion":"1.0.0","name":"n","type":"xdpbridge","runtimeConfig":{"mac":"01:00:5e:00:00:01"}}`,
+		"timeout":       `{"cniVersion":"1.0.0","name":"n","type":"xdpbridge","timeoutSeconds":-2}`,
 	}
 	for name, in := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -60,7 +60,7 @@ func TestParseErrors(t *testing.T) {
 }
 
 func TestMACPrecedence(t *testing.T) {
-	base := `{"cniVersion":"1.0.0","name":"n","type":"xdpl2","mac":"02:00:00:00:00:04"`
+	base := `{"cniVersion":"1.0.0","name":"n","type":"xdpbridge","mac":"02:00:00:00:00:04"`
 	tests := []struct {
 		conf, args, want string
 	}{
@@ -81,7 +81,7 @@ func TestMACPrecedence(t *testing.T) {
 }
 
 func TestK8sArgs(t *testing.T) {
-	_, k8s, err := Parse([]byte(`{"cniVersion":"1.0.0","name":"n","type":"xdpl2"}`),
+	_, k8s, err := Parse([]byte(`{"cniVersion":"1.0.0","name":"n","type":"xdpbridge"}`),
 		"IgnoreUnknown=1;K8S_POD_NAMESPACE=default;K8S_POD_NAME=web-0;K8S_POD_UID=abc")
 	if err != nil {
 		t.Fatal(err)
@@ -92,7 +92,7 @@ func TestK8sArgs(t *testing.T) {
 }
 
 func TestPrevResult(t *testing.T) {
-	in := `{"cniVersion":"1.0.0","name":"n","type":"xdpl2",
+	in := `{"cniVersion":"1.0.0","name":"n","type":"xdpbridge",
 	  "prevResult":{"cniVersion":"1.0.0","interfaces":[{"name":"eth1","mac":"02:00:00:00:00:01","sandbox":"/run/netns/x"}],
 	  "ips":[{"address":"192.0.2.10/24","interface":0}]}}`
 	conf, _, err := Parse([]byte(in), "")

@@ -19,12 +19,12 @@ type PortRef struct {
 
 // Result of a cross-check.
 type Result struct {
-	// MissingPorts describes xdpl2 attachments of live pods that have no
+	// MissingPorts describes xdpbridge attachments of live pods that have no
 	// registered port: the pod runs without its interface.
 	MissingPorts []string
 	// OrphanPorts describes registered ports whose pod is not on this node.
 	OrphanPorts []string
-	// Checked is the number of pods with xdpl2 attachments examined.
+	// Checked is the number of pods with xdpbridge attachments examined.
 	Checked int
 }
 
@@ -66,7 +66,7 @@ func CrossCheck(s Snapshot, ports []PortRef, now time.Time, grace time.Duration)
 				continue
 			}
 			r.MissingPorts = append(r.MissingPorts, fmt.Sprintf(
-				"pod %s (%s) has no xdpl2 port for network %s interface %s", pod.Key(), pod.Phase, a.Ref(), a.Interface))
+				"pod %s (%s) has no xdpbridge port for network %s interface %s", pod.Key(), pod.Phase, a.Ref(), a.Interface))
 		}
 		// Interfaces without an explicit name: match by count.
 		for i, a := range unnamed {
@@ -74,7 +74,7 @@ func CrossCheck(s Snapshot, ports []PortRef, now time.Time, grace time.Duration)
 				continue
 			}
 			r.MissingPorts = append(r.MissingPorts, fmt.Sprintf(
-				"pod %s (%s) has no xdpl2 port for network %s", pod.Key(), pod.Phase, a.Ref()))
+				"pod %s (%s) has no xdpbridge port for network %s", pod.Key(), pod.Phase, a.Ref()))
 		}
 	}
 

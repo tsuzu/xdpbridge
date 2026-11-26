@@ -5,12 +5,12 @@ export GOTOOLCHAIN ?= local
 BPF_MULTIARCH ?= $(shell gcc -print-multiarch 2>/dev/null || echo x86_64-linux-gnu)
 export BPF_MULTIARCH
 VERSION       ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo v0.1.0-dev)
-LDFLAGS       := -s -w -X github.com/tsuzu/xdpl2/internal/version.Version=$(VERSION)
+LDFLAGS       := -s -w -X github.com/tsuzu/xdpbridge/internal/version.Version=$(VERSION)
 BIN           := bin
-IMAGE         ?= ghcr.io/tsuzu/xdpl2:$(VERSION)
+IMAGE         ?= ghcr.io/tsuzu/xdpbridge:$(VERSION)
 
-BPF_SRC := bpf/xdpl2.bpf.c bpf/xdpl2.h
-BPF_GEN := internal/bpfobj/xdpl2_bpfel.go internal/bpfobj/xdpl2_bpfel.o
+BPF_SRC := bpf/xdpbridge.bpf.c bpf/xdpbridge.h
+BPF_GEN := internal/bpfobj/xdpbridge_bpfel.go internal/bpfobj/xdpbridge_bpfel.o
 
 .PHONY: all generate build test vet fmt-check unit integration lint-manifests image clean
 

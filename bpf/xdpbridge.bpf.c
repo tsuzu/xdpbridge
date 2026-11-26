@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
 /*
- * xdpl2 data path: a minimal L2 switch built from three BPF programs.
+ * xdpbridge data path: a minimal L2 switch built from three BPF programs.
  *
  *   xdp_uplink          XDP on the uplink NIC (wire -> pods / host)
  *   tc_port_ingress     TCX ingress on each pod's host-side veth (pod -> *)
@@ -20,7 +20,7 @@
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_endian.h>
 
-#include "xdpl2.h"
+#include "xdpbridge.h"
 
 #ifndef TCX_NEXT
 #define TCX_NEXT -1
@@ -36,7 +36,7 @@ struct vlan_hdr {
 
 struct {
 	__uint(type, BPF_MAP_TYPE_HASH);
-	__uint(max_entries, XDPL2_MAX_PORTS * 2);
+	__uint(max_entries, XDPBRIDGE_MAX_PORTS * 2);
 	__type(key, struct fdb_key);
 	__type(value, struct fdb_val);
 	__uint(pinning, LIBBPF_PIN_BY_NAME);
@@ -44,7 +44,7 @@ struct {
 
 struct {
 	__uint(type, BPF_MAP_TYPE_ARRAY);
-	__uint(max_entries, XDPL2_MAX_PORTS);
+	__uint(max_entries, XDPBRIDGE_MAX_PORTS);
 	__type(key, __u32);
 	__type(value, struct port);
 	__uint(pinning, LIBBPF_PIN_BY_NAME);
@@ -53,7 +53,7 @@ struct {
 /* host-side veth ifindex -> port id, used by tc_port_ingress. */
 struct {
 	__uint(type, BPF_MAP_TYPE_HASH);
-	__uint(max_entries, XDPL2_MAX_PORTS);
+	__uint(max_entries, XDPBRIDGE_MAX_PORTS);
 	__type(key, __u32);
 	__type(value, __u32);
 	__uint(pinning, LIBBPF_PIN_BY_NAME);
@@ -79,7 +79,7 @@ struct {
 /* MACs owned locally (pods and host), regardless of VLAN: loop guard. */
 struct {
 	__uint(type, BPF_MAP_TYPE_HASH);
-	__uint(max_entries, XDPL2_MAX_PORTS * 2 + 4096);
+	__uint(max_entries, XDPBRIDGE_MAX_PORTS * 2 + 4096);
 	__type(key, struct mac_key);
 	__type(value, __u32);
 	__uint(pinning, LIBBPF_PIN_BY_NAME);
@@ -104,9 +104,9 @@ const struct flood_event *unused_flood_event __attribute__((unused));
 const struct fdb_val *unused_fdb_val __attribute__((unused));
 const struct host_vlan *unused_host_vlan __attribute__((unused));
 const struct mac_key *unused_mac_key __attribute__((unused));
-const enum xdpl2_stat *unused_stat __attribute__((unused));
-const enum xdpl2_origin *unused_origin __attribute__((unused));
-const enum xdpl2_port_kind *unused_kind __attribute__((unused));
+const enum xdpbridge_stat *unused_stat __attribute__((unused));
+const enum xdpbridge_origin *unused_origin __attribute__((unused));
+const enum xdpbridge_port_kind *unused_kind __attribute__((unused));
 
 static __always_inline void stat_inc(__u32 idx)
 {
@@ -173,7 +173,7 @@ static __always_inline void xdp_punt(struct xdp_md *ctx, __u16 vlan, int tagged)
 	struct flood_event *ev;
 	__u64 len = bpf_xdp_get_buff_len(ctx);
 
-	if (len < ETH_HLEN || len > XDPL2_MAX_FLOOD_LEN) {
+	if (len < ETH_HLEN || len > XDPBRIDGE_MAX_FLOOD_LEN) {
 		stat_inc(STAT_FLOOD_TOO_BIG);
 		return;
 	}
@@ -190,7 +190,7 @@ static __always_inline void xdp_punt(struct xdp_md *ctx, __u16 vlan, int tagged)
 	ev->len = len;
 	ev->src_port = 0;
 	ev->vlan = vlan;
-	ev->origin = XDPL2_ORIGIN_UPLINK;
+	ev->origin = XDPBRIDGE_ORIGIN_UPLINK;
 	ev->tagged = tagged;
 	ev->pad = 0;
 	bpf_ringbuf_submit(ev, 0);
@@ -248,7 +248,7 @@ int xdp_uplink(struct xdp_md *ctx)
 	}
 
 	p = fdb_lookup(eth->h_dest, vlan, &port_id);
-	if (!p || p->kind != XDPL2_PORT_POD) {
+	if (!p || p->kind != XDPBRIDGE_PORT_POD) {
 		/* host MAC, unknown unicast, non-switched traffic: untouched */
 		stat_inc(STAT_XDP_PASS);
 		return XDP_PASS;
@@ -286,7 +286,7 @@ static __always_inline void tc_punt(struct __sk_buff *skb, __u8 origin,
 	struct flood_event *ev;
 	__u32 len = skb->len;
 
-	if (len < ETH_HLEN || len > XDPL2_MAX_FLOOD_LEN) {
+	if (len < ETH_HLEN || len > XDPBRIDGE_MAX_FLOOD_LEN) {
 		stat_inc(STAT_FLOOD_TOO_BIG);
 		return;
 	}
@@ -335,7 +335,7 @@ int tc_port_ingress(struct __sk_buff *skb)
 	}
 	sid = *self_id;
 	self = bpf_map_lookup_elem(&port_table, &sid);
-	if (!self || self->kind != XDPL2_PORT_POD) {
+	if (!self || self->kind != XDPBRIDGE_PORT_POD) {
 		stat_inc(STAT_PORT_DROP_UNKNOWN);
 		return TC_ACT_SHOT;
 	}
@@ -379,14 +379,14 @@ int tc_port_ingress(struct __sk_buff *skb)
 					bpf_skb_vlan_pop(skb);
 			}
 		}
-		tc_punt(skb, XDPL2_ORIGIN_PORT, sid, vlan, 0);
+		tc_punt(skb, XDPBRIDGE_ORIGIN_PORT, sid, vlan, 0);
 		stat_inc(STAT_PORT_FLOOD);
 		return TC_ACT_SHOT;
 	}
 
 	dst = fdb_lookup(dmac, self->vlan, &dst_id);
 	if (dst) {
-		if (dst->kind == XDPL2_PORT_HOST) {
+		if (dst->kind == XDPBRIDGE_PORT_HOST) {
 			/* Into the host stack; tagged so the VLAN subinterface gets it. */
 			if (self->vlan &&
 			    bpf_skb_vlan_push(skb, bpf_htons(ETH_P_8021Q), self->vlan)) {
@@ -464,14 +464,14 @@ int tc_uplink_egress(struct __sk_buff *skb)
 		 * and must not be punted again.
 		 */
 		if (mac_eq(eth->h_source, hv->mac)) {
-			tc_punt(skb, XDPL2_ORIGIN_HOST, XDPL2_HOST_PORT, vlan, inband);
+			tc_punt(skb, XDPBRIDGE_ORIGIN_HOST, XDPBRIDGE_HOST_PORT, vlan, inband);
 			stat_inc(STAT_UPLINK_EGRESS_FLOOD);
 		}
 		return TCX_NEXT;
 	}
 
 	dst = fdb_lookup(eth->h_dest, vlan, &dst_id);
-	if (dst && dst->kind == XDPL2_PORT_POD) {
+	if (dst && dst->kind == XDPBRIDGE_PORT_POD) {
 		/* Access port: deliver untagged (metadata or in-band tag). */
 		if (vlan && bpf_skb_vlan_pop(skb)) {
 			stat_inc(STAT_REDIRECT_ERROR);

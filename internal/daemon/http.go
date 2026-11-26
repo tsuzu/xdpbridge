@@ -11,7 +11,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/tsuzu/xdpl2/internal/api"
+	"github.com/tsuzu/xdpbridge/internal/api"
 )
 
 type httpErr struct {
@@ -119,29 +119,29 @@ func (s *Server) Metrics() string {
 	if st.Healthy {
 		healthy = 1
 	}
-	fmt.Fprintf(&b, "# HELP xdpl2_healthy 1 if the daemon reports no problems.\n# TYPE xdpl2_healthy gauge\nxdpl2_healthy %d\n", healthy)
-	fmt.Fprintf(&b, "# HELP xdpl2_ports Registered pod ports.\n# TYPE xdpl2_ports gauge\nxdpl2_ports %d\n", st.Ports)
-	fmt.Fprintf(&b, "# HELP xdpl2_unregistered_veths Host veths without a registration (watchdog).\n# TYPE xdpl2_unregistered_veths gauge\nxdpl2_unregistered_veths %d\n", len(st.UnregisteredVeths))
-	fmt.Fprintf(&b, "# HELP xdpl2_ports_netns_not_visible Live ports whose pod netns path the daemon cannot see.\n# TYPE xdpl2_ports_netns_not_visible gauge\nxdpl2_ports_netns_not_visible %d\n", st.NetnsNotVisible)
-	fmt.Fprintf(&b, "# HELP xdpl2_problems Problems reported by /healthz.\n# TYPE xdpl2_problems gauge\nxdpl2_problems %d\n", len(st.Problems))
+	fmt.Fprintf(&b, "# HELP xdpbridge_healthy 1 if the daemon reports no problems.\n# TYPE xdpbridge_healthy gauge\nxdpbridge_healthy %d\n", healthy)
+	fmt.Fprintf(&b, "# HELP xdpbridge_ports Registered pod ports.\n# TYPE xdpbridge_ports gauge\nxdpbridge_ports %d\n", st.Ports)
+	fmt.Fprintf(&b, "# HELP xdpbridge_unregistered_veths Host veths without a registration (watchdog).\n# TYPE xdpbridge_unregistered_veths gauge\nxdpbridge_unregistered_veths %d\n", len(st.UnregisteredVeths))
+	fmt.Fprintf(&b, "# HELP xdpbridge_ports_netns_not_visible Live ports whose pod netns path the daemon cannot see.\n# TYPE xdpbridge_ports_netns_not_visible gauge\nxdpbridge_ports_netns_not_visible %d\n", st.NetnsNotVisible)
+	fmt.Fprintf(&b, "# HELP xdpbridge_problems Problems reported by /healthz.\n# TYPE xdpbridge_problems gauge\nxdpbridge_problems %d\n", len(st.Problems))
 	if st.K8s != nil {
 		synced := 0
 		if st.K8s.Synced {
 			synced = 1
 		}
-		fmt.Fprintf(&b, "# HELP xdpl2_k8s_watch_synced 1 if the Kubernetes-API watchdog is synced.\n# TYPE xdpl2_k8s_watch_synced gauge\nxdpl2_k8s_watch_synced %d\n", synced)
-		fmt.Fprintf(&b, "# HELP xdpl2_k8s_pods_expected Live pods on this node with xdpl2 attachments.\n# TYPE xdpl2_k8s_pods_expected gauge\nxdpl2_k8s_pods_expected %d\n", st.K8s.PodsExpected)
-		fmt.Fprintf(&b, "# HELP xdpl2_k8s_missing_ports xdpl2 attachments of running pods without a registered port.\n# TYPE xdpl2_k8s_missing_ports gauge\nxdpl2_k8s_missing_ports %d\n", len(st.K8s.MissingPorts))
-		fmt.Fprintf(&b, "# HELP xdpl2_k8s_orphan_ports Registered ports whose pod is not on this node.\n# TYPE xdpl2_k8s_orphan_ports gauge\nxdpl2_k8s_orphan_ports %d\n", len(st.K8s.OrphanPorts))
+		fmt.Fprintf(&b, "# HELP xdpbridge_k8s_watch_synced 1 if the Kubernetes-API watchdog is synced.\n# TYPE xdpbridge_k8s_watch_synced gauge\nxdpbridge_k8s_watch_synced %d\n", synced)
+		fmt.Fprintf(&b, "# HELP xdpbridge_k8s_pods_expected Live pods on this node with xdpbridge attachments.\n# TYPE xdpbridge_k8s_pods_expected gauge\nxdpbridge_k8s_pods_expected %d\n", st.K8s.PodsExpected)
+		fmt.Fprintf(&b, "# HELP xdpbridge_k8s_missing_ports xdpbridge attachments of running pods without a registered port.\n# TYPE xdpbridge_k8s_missing_ports gauge\nxdpbridge_k8s_missing_ports %d\n", len(st.K8s.MissingPorts))
+		fmt.Fprintf(&b, "# HELP xdpbridge_k8s_orphan_ports Registered ports whose pod is not on this node.\n# TYPE xdpbridge_k8s_orphan_ports gauge\nxdpbridge_k8s_orphan_ports %d\n", len(st.K8s.OrphanPorts))
 	}
 	keys := make([]string, 0, len(st.Counters))
 	for k := range st.Counters {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
-	fmt.Fprintf(&b, "# HELP xdpl2_events_total Data path, flood and reconciler counters.\n# TYPE xdpl2_events_total counter\n")
+	fmt.Fprintf(&b, "# HELP xdpbridge_events_total Data path, flood and reconciler counters.\n# TYPE xdpbridge_events_total counter\n")
 	for _, k := range keys {
-		fmt.Fprintf(&b, "xdpl2_events_total{counter=%q} %d\n", k, st.Counters[k])
+		fmt.Fprintf(&b, "xdpbridge_events_total{counter=%q} %d\n", k, st.Counters[k])
 	}
 	return b.String()
 }

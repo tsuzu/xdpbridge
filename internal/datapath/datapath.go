@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-// Package datapath loads the xdpl2 BPF programs, attaches them to the uplink
+// Package datapath loads the xdpbridge BPF programs, attaches them to the uplink
 // and to pod ports, and manages the forwarding maps.
 //
 // All maps and links are pinned below a bpffs directory so that the data path
@@ -22,7 +22,7 @@ import (
 	"github.com/vishvananda/netlink"
 	"golang.org/x/sys/unix"
 
-	"github.com/tsuzu/xdpl2/internal/bpfobj"
+	"github.com/tsuzu/xdpbridge/internal/bpfobj"
 )
 
 // XDPMode selects how the uplink XDP program is attached.
@@ -43,14 +43,14 @@ func ParseXDPMode(s string) (XDPMode, error) {
 	return "", fmt.Errorf("invalid XDP mode %q (want auto, native or generic)", s)
 }
 
-// Port kinds, mirroring enum xdpl2_port_kind.
+// Port kinds, mirroring enum xdpbridge_port_kind.
 const (
-	KindHost = uint8(bpfobj.Xdpl2Xdpl2PortKindXDPL2PORT_HOST)
-	KindPod  = uint8(bpfobj.Xdpl2Xdpl2PortKindXDPL2PORT_POD)
+	KindHost = uint8(bpfobj.XdpbridgeXdpbridgePortKindXDPBRIDGE_PORT_HOST)
+	KindPod  = uint8(bpfobj.XdpbridgeXdpbridgePortKindXDPBRIDGE_PORT_POD)
 )
 
 const (
-	// MaxPorts mirrors XDPL2_MAX_PORTS. Port 0 is the host stack.
+	// MaxPorts mirrors XDPBRIDGE_MAX_PORTS. Port 0 is the host stack.
 	MaxPorts = 1024
 	// HostPortID is the port id of the host stack.
 	HostPortID = 0
@@ -59,10 +59,10 @@ const (
 // Options configures Open.
 type Options struct {
 	Uplink   string  // uplink interface name
-	PinDir   string  // bpffs directory, e.g. /sys/fs/bpf/xdpl2
+	PinDir   string  // bpffs directory, e.g. /sys/fs/bpf/xdpbridge
 	Mode     XDPMode // XDP attach mode
 	ForceXDP bool    // replace a foreign XDP program on the uplink
-	// RestoreFile records the uplink settings xdpl2 changes (promiscuous
+	// RestoreFile records the uplink settings xdpbridge changes (promiscuous
 	// mode, VLAN offloads) the first time it attaches, so Teardown can put
 	// them back. Empty disables recording.
 	RestoreFile string
@@ -73,7 +73,7 @@ type Options struct {
 type Datapath struct {
 	opts   Options
 	log    *slog.Logger
-	objs   bpfobj.Xdpl2Objects
+	objs   bpfobj.XdpbridgeObjects
 	uplink netlink.Link
 	mode   XDPMode
 
@@ -115,7 +115,7 @@ func Open(opts Options) (*Datapath, error) {
 
 	d := &Datapath{opts: opts, log: opts.Logger, uplink: uplink, links: map[string]link.Link{}}
 
-	spec, err := bpfobj.LoadXdpl2()
+	spec, err := bpfobj.LoadXdpbridge()
 	if err != nil {
 		return nil, err
 	}
@@ -195,7 +195,7 @@ func ensureBPFFS(dir string) error {
 }
 
 func (d *Datapath) writeConfig() error {
-	var cfg bpfobj.Xdpl2Config
+	var cfg bpfobj.XdpbridgeConfig
 	cfg.UplinkIfindex = uint32(d.uplink.Attrs().Index)
 	copy(cfg.HostMac[:], d.uplink.Attrs().HardwareAddr)
 	return d.objs.ConfigMap.Put(uint32(0), &cfg)
@@ -256,7 +256,7 @@ func (d *Datapath) attachXDP() error {
 	if x := d.uplink.Attrs().Xdp; x != nil && x.Attached && !ours {
 		if !d.opts.ForceXDP {
 			return fmt.Errorf("refusing to replace foreign XDP program (id %d) on %s; "+
-				"xdpl2 needs the XDP hook (pass --force-xdp to override)", x.ProgId, d.opts.Uplink)
+				"xdpbridge needs the XDP hook (pass --force-xdp to override)", x.ProgId, d.opts.Uplink)
 		}
 		d.log.Warn("replacing foreign XDP program on uplink", "uplink", d.opts.Uplink, "prog_id", x.ProgId)
 		if err := netlink.LinkSetXdpFd(d.uplink, -1); err != nil {
@@ -361,7 +361,7 @@ func (d *Datapath) SetPort(p PortSpec, old *PortSpec) error {
 		d.deleteEntries(*old, p)
 	}
 
-	var pv bpfobj.Xdpl2Port
+	var pv bpfobj.XdpbridgePort
 	pv.Ifindex = uint32(p.Ifindex)
 	pv.Vlan = p.VLAN
 	pv.Kind = p.Kind
@@ -374,7 +374,7 @@ func (d *Datapath) SetPort(p PortSpec, old *PortSpec) error {
 			return fmt.Errorf("ifindex_ports: %w", err)
 		}
 	}
-	if err := d.objs.Ports.Put(fdbKey(p.MAC, p.VLAN), bpfobj.Xdpl2FdbVal{PortId: p.ID}); err != nil {
+	if err := d.objs.Ports.Put(fdbKey(p.MAC, p.VLAN), bpfobj.XdpbridgeFdbVal{PortId: p.ID}); err != nil {
 		return fmt.Errorf("ports: %w", err)
 	}
 	if err := d.objs.LocalMacs.Put(macKey(p.MAC), p.ID); err != nil {
@@ -383,8 +383,8 @@ func (d *Datapath) SetPort(p PortSpec, old *PortSpec) error {
 	return nil
 }
 
-func macKey(mac net.HardwareAddr) bpfobj.Xdpl2MacKey {
-	var k bpfobj.Xdpl2MacKey
+func macKey(mac net.HardwareAddr) bpfobj.XdpbridgeMacKey {
+	var k bpfobj.XdpbridgeMacKey
 	copy(k.Mac[:], mac)
 	return k
 }
@@ -419,7 +419,7 @@ func (d *Datapath) HostVLANs() (map[uint16]net.HardwareAddr, error) {
 func (d *Datapath) SyncHostVLANs(want map[uint16]net.HardwareAddr) error {
 	var (
 		k  uint32
-		hv bpfobj.Xdpl2HostVlan
+		hv bpfobj.XdpbridgeHostVlan
 	)
 	stale := map[uint16]net.HardwareAddr{}
 	it := d.objs.HostVlans.Iterate()
@@ -438,7 +438,7 @@ func (d *Datapath) SyncHostVLANs(want map[uint16]net.HardwareAddr) error {
 	}
 	for vid, mac := range stale {
 		_ = d.objs.HostVlans.Delete(uint32(vid))
-		var v bpfobj.Xdpl2FdbVal
+		var v bpfobj.XdpbridgeFdbVal
 		if d.objs.Ports.Lookup(fdbKey(mac, vid), &v) == nil && v.PortId == HostPortID {
 			_ = d.objs.Ports.Delete(fdbKey(mac, vid))
 		}
@@ -448,12 +448,12 @@ func (d *Datapath) SyncHostVLANs(want map[uint16]net.HardwareAddr) error {
 		}
 	}
 	for vid, mac := range want {
-		var v bpfobj.Xdpl2HostVlan
+		var v bpfobj.XdpbridgeHostVlan
 		copy(v.Mac[:], mac)
 		if err := d.objs.HostVlans.Put(uint32(vid), &v); err != nil {
 			return fmt.Errorf("host_vlans: %w", err)
 		}
-		if err := d.objs.Ports.Put(fdbKey(mac, vid), bpfobj.Xdpl2FdbVal{PortId: HostPortID}); err != nil {
+		if err := d.objs.Ports.Put(fdbKey(mac, vid), bpfobj.XdpbridgeFdbVal{PortId: HostPortID}); err != nil {
 			return fmt.Errorf("ports: %w", err)
 		}
 		if err := d.objs.LocalMacs.Put(macKey(mac), uint32(HostPortID)); err != nil {
@@ -467,7 +467,7 @@ func (d *Datapath) SyncHostVLANs(want map[uint16]net.HardwareAddr) error {
 func (d *Datapath) deleteEntries(old, keep PortSpec) {
 	if old.MAC.String() != keep.MAC.String() || old.VLAN != keep.VLAN {
 		k := fdbKey(old.MAC, old.VLAN)
-		var v bpfobj.Xdpl2FdbVal
+		var v bpfobj.XdpbridgeFdbVal
 		if d.objs.Ports.Lookup(k, &v) == nil && v.PortId == old.ID {
 			_ = d.objs.Ports.Delete(k)
 		}
@@ -489,7 +489,7 @@ func (d *Datapath) deleteEntries(old, keep PortSpec) {
 // RemovePort removes a pod port from the maps and detaches its program.
 func (d *Datapath) RemovePort(p PortSpec) error {
 	d.deleteEntries(p, PortSpec{})
-	var zero bpfobj.Xdpl2Port
+	var zero bpfobj.XdpbridgePort
 	if err := d.objs.PortTable.Put(p.ID, &zero); err != nil {
 		return err
 	}
@@ -513,8 +513,8 @@ func (d *Datapath) PortLinkPinned(id uint32, ifindex int) bool {
 	return err == nil && info.TCX() != nil && info.TCX().Ifindex == uint32(ifindex)
 }
 
-func fdbKey(mac net.HardwareAddr, vlan uint16) bpfobj.Xdpl2FdbKey {
-	var k bpfobj.Xdpl2FdbKey
+func fdbKey(mac net.HardwareAddr, vlan uint16) bpfobj.XdpbridgeFdbKey {
+	var k bpfobj.XdpbridgeFdbKey
 	copy(k.Mac[:], mac)
 	k.Vlan = vlan
 	return k
@@ -530,8 +530,8 @@ type FDBEntry struct {
 // FDB dumps the forwarding database.
 func (d *Datapath) FDB() ([]FDBEntry, error) {
 	var (
-		k   bpfobj.Xdpl2FdbKey
-		v   bpfobj.Xdpl2FdbVal
+		k   bpfobj.XdpbridgeFdbKey
+		v   bpfobj.XdpbridgeFdbVal
 		out []FDBEntry
 	)
 	it := d.objs.Ports.Iterate()
@@ -548,7 +548,7 @@ func (d *Datapath) DeleteFDB(mac net.HardwareAddr, vlan uint16) error {
 
 // LookupPort reads one port_table entry.
 func (d *Datapath) LookupPort(id uint32) (PortSpec, error) {
-	var pv bpfobj.Xdpl2Port
+	var pv bpfobj.XdpbridgePort
 	if err := d.objs.PortTable.Lookup(id, &pv); err != nil {
 		return PortSpec{}, err
 	}

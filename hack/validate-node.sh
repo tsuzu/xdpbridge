@@ -1,53 +1,53 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: Apache-2.0
 #
-# Validate an xdpl2 node and print a PASS/FAIL summary.
+# Validate an xdpbridge node and print a PASS/FAIL summary.
 #
 # Checks:
 #   xdp        XDP program xdp_uplink is attached to the uplink (and its mode)
 #   tcx        expected TCX programs (e.g. Cilium's) are still on the uplink,
-#              plus xdpl2's tc_uplink_egress
+#              plus xdpbridge's tc_uplink_egress
 #   health     the daemon reports healthy (/healthz, or `status` via socket)
 #   pins       the expected pinned maps and links exist under the bpffs dir
-#   link-id    the XDP program on the uplink is the one held by xdpl2's pin
+#   link-id    the XDP program on the uplink is the one held by xdpbridge's pin
 #
 # Two modes:
 #   local (KUBECTL unset)  run on the node itself, e.g. in a privileged
 #                          hostNetwork pod; uses ip, bpftool, ls, curl/wget
 #                          or the daemon binary
 #   remote (KUBECTL set)   e.g. KUBECTL="kubectl --context my-ctx"; runs
-#                          `xdpl2-daemon status` in the node's xdpl2 pod and
+#                          `xdpbridge-daemon status` in the node's xdpbridge pod and
 #                          judges kernel state as reported by the daemon
 #
-# Environment (all optional except XDPL2_UPLINK in local mode):
-#   XDPL2_UPLINK        uplink interface name
-#   XDPL2_BPFFS         pin directory            (default /sys/fs/bpf/xdpl2)
-#   XDPL2_SOCKET        daemon socket            (default /run/xdpl2/xdpl2.sock)
-#   XDPL2_PROBE_ADDR    daemon probe listener    (default 127.0.0.1:9967)
-#   XDPL2_DAEMON_BIN    daemon binary            (default xdpl2-daemon in PATH)
-#   XDPL2_EXPECT_XDP_MODE  native|generic|any    (default any)
-#   XDPL2_EXPECT_TCX    space-separated hook:name items that must be present
+# Environment (all optional except XDPBRIDGE_UPLINK in local mode):
+#   XDPBRIDGE_UPLINK        uplink interface name
+#   XDPBRIDGE_BPFFS         pin directory            (default /sys/fs/bpf/xdpbridge)
+#   XDPBRIDGE_SOCKET        daemon socket            (default /run/xdpbridge/xdpbridge.sock)
+#   XDPBRIDGE_PROBE_ADDR    daemon probe listener    (default 127.0.0.1:9967)
+#   XDPBRIDGE_DAEMON_BIN    daemon binary            (default xdpbridge-daemon in PATH)
+#   XDPBRIDGE_EXPECT_XDP_MODE  native|generic|any    (default any)
+#   XDPBRIDGE_EXPECT_TCX    space-separated hook:name items that must be present
 #                       (default "ingress:cil_from_netdev egress:cil_to_netdev";
 #                       set to "" on clusters without Cilium)
-#   XDPL2_EXPECT_PINS   pins that must exist (default: all xdpl2 maps + links)
+#   XDPBRIDGE_EXPECT_PINS   pins that must exist (default: all xdpbridge maps + links)
 #   BPFTOOL             bpftool binary           (default bpftool)
 #   KUBECTL             enables remote mode
-#   XDPL2_NAMESPACE     namespace of the DaemonSet (default xdpl2-system)
-#   XDPL2_POD           daemon pod, or XDPL2_NODE to find it by node name
+#   XDPBRIDGE_NAMESPACE     namespace of the DaemonSet (default xdpbridge-system)
+#   XDPBRIDGE_POD           daemon pod, or XDPBRIDGE_NODE to find it by node name
 #
 # Exit status: 0 if every check passed (SKIPs allowed), 1 otherwise.
 set -uo pipefail
 
-BPFFS=${XDPL2_BPFFS:-/sys/fs/bpf/xdpl2}
-SOCKET=${XDPL2_SOCKET:-/run/xdpl2/xdpl2.sock}
-PROBE=${XDPL2_PROBE_ADDR:-127.0.0.1:9967}
-DAEMON=${XDPL2_DAEMON_BIN:-xdpl2-daemon}
-EXPECT_MODE=${XDPL2_EXPECT_XDP_MODE:-any}
-EXPECT_TCX=${XDPL2_EXPECT_TCX-ingress:cil_from_netdev egress:cil_to_netdev}
-EXPECT_PINS=${XDPL2_EXPECT_PINS:-ports port_table ifindex_ports config_map stats flood_rb host_vlans local_macs links/xdp_uplink links/uplink_egress}
+BPFFS=${XDPBRIDGE_BPFFS:-/sys/fs/bpf/xdpbridge}
+SOCKET=${XDPBRIDGE_SOCKET:-/run/xdpbridge/xdpbridge.sock}
+PROBE=${XDPBRIDGE_PROBE_ADDR:-127.0.0.1:9967}
+DAEMON=${XDPBRIDGE_DAEMON_BIN:-xdpbridge-daemon}
+EXPECT_MODE=${XDPBRIDGE_EXPECT_XDP_MODE:-any}
+EXPECT_TCX=${XDPBRIDGE_EXPECT_TCX-ingress:cil_from_netdev egress:cil_to_netdev}
+EXPECT_PINS=${XDPBRIDGE_EXPECT_PINS:-ports port_table ifindex_ports config_map stats flood_rb host_vlans local_macs links/xdp_uplink links/uplink_egress}
 BPFTOOL=${BPFTOOL:-bpftool}
-NS=${XDPL2_NAMESPACE:-xdpl2-system}
-UPLINK=${XDPL2_UPLINK:-}
+NS=${XDPBRIDGE_NAMESPACE:-xdpbridge-system}
+UPLINK=${XDPBRIDGE_UPLINK:-}
 
 PASS=0 FAIL=0 SKIP=0
 LINES=()
@@ -88,15 +88,15 @@ check_tcx_lists() { # <ingress names> <egress names> <source>
 
 # ---------------------------------------------------------------------------
 remote() {
-	local pod=${XDPL2_POD:-}
+	local pod=${XDPBRIDGE_POD:-}
 	if [ -z "$pod" ]; then
-		[ -n "${XDPL2_NODE:-}" ] || { echo "remote mode needs XDPL2_POD or XDPL2_NODE" >&2; exit 2; }
-		pod=$($KUBECTL -n "$NS" get pods -l app.kubernetes.io/name=xdpl2 \
-			--field-selector "spec.nodeName=$XDPL2_NODE" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
-		[ -n "$pod" ] || { echo "no xdpl2 pod found on node $XDPL2_NODE" >&2; exit 2; }
+		[ -n "${XDPBRIDGE_NODE:-}" ] || { echo "remote mode needs XDPBRIDGE_POD or XDPBRIDGE_NODE" >&2; exit 2; }
+		pod=$($KUBECTL -n "$NS" get pods -l app.kubernetes.io/name=xdpbridge \
+			--field-selector "spec.nodeName=$XDPBRIDGE_NODE" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+		[ -n "$pod" ] || { echo "no xdpbridge pod found on node $XDPBRIDGE_NODE" >&2; exit 2; }
 	fi
 	local st
-	if ! st=$($KUBECTL -n "$NS" exec "$pod" -c daemon -- /usr/local/bin/xdpl2-daemon status 2>&1); then
+	if ! st=$($KUBECTL -n "$NS" exec "$pod" -c daemon -- /usr/local/bin/xdpbridge-daemon status 2>&1); then
 		result FAIL health "cannot query daemon in pod $pod: $(echo "$st" | tail -1)"
 		summary "remote (pod $pod)"
 	fi
@@ -142,7 +142,7 @@ check_xdp() { # <prog name> <mode> <source>
 
 # ---------------------------------------------------------------------------
 local_mode() {
-	[ -n "$UPLINK" ] || { echo "XDPL2_UPLINK is required" >&2; exit 2; }
+	[ -n "$UPLINK" ] || { echo "XDPBRIDGE_UPLINK is required" >&2; exit 2; }
 	ip link show dev "$UPLINK" >/dev/null 2>&1 || { echo "uplink $UPLINK not found in this network namespace" >&2; exit 2; }
 	local have_bpftool=0 st=
 	"$BPFTOOL" version >/dev/null 2>&1 && have_bpftool=1
@@ -199,7 +199,7 @@ local_mode() {
 		local lprog hprog
 		lprog=$("$BPFTOOL" link show pinned "$BPFFS/links/xdp_uplink" 2>/dev/null | sed -n 's/.*prog \([0-9]*\).*/\1/p' | head -1)
 		hprog=$(echo "$ipd" | sed -n 's/.*prog\/xdp id \([0-9]*\).*/\1/p' | head -1)
-		if [ -n "$lprog" ] && [ "$lprog" = "$hprog" ]; then result PASS link-id "uplink XDP prog $hprog is held by the pinned xdpl2 link"
+		if [ -n "$lprog" ] && [ "$lprog" = "$hprog" ]; then result PASS link-id "uplink XDP prog $hprog is held by the pinned xdpbridge link"
 		else result FAIL link-id "uplink XDP prog '${hprog:-none}' != pinned link prog '${lprog:-none}'"; fi
 	else
 		result SKIP link-id "needs bpftool and the pinned XDP link"
@@ -208,7 +208,7 @@ local_mode() {
 }
 
 summary() {
-	echo "xdpl2 node validation: $1"
+	echo "xdpbridge node validation: $1"
 	printf '%s\n' "${LINES[@]}"
 	echo "----"
 	echo "PASS: $PASS  FAIL: $FAIL  SKIP: $SKIP"

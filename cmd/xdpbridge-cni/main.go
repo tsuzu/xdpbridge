@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-// Command xdpl2-cni is the xdpl2 CNI plugin. On ADD it creates a veth pair,
+// Command xdpbridge-cni is the xdpbridge CNI plugin. On ADD it creates a veth pair,
 // moves one end into the pod, configures addresses via the delegated IPAM
 // plugin and registers the host end as a switch port with the node daemon.
 // If registration fails the ADD fails and everything is rolled back, so a
@@ -23,9 +23,9 @@ import (
 	"github.com/containernetworking/plugins/pkg/ns"
 	"github.com/vishvananda/netlink"
 
-	"github.com/tsuzu/xdpl2/internal/api"
-	"github.com/tsuzu/xdpl2/internal/cniconfig"
-	"github.com/tsuzu/xdpl2/internal/version"
+	"github.com/tsuzu/xdpbridge/internal/api"
+	"github.com/tsuzu/xdpbridge/internal/cniconfig"
+	"github.com/tsuzu/xdpbridge/internal/version"
 )
 
 func main() {
@@ -34,7 +34,7 @@ func main() {
 		Del:    cmdDel,
 		Check:  cmdCheck,
 		Status: cmdStatus,
-	}, cniversion.All, "xdpl2 CNI plugin "+version.Version)
+	}, cniversion.All, "xdpbridge CNI plugin "+version.Version)
 }
 
 func cmdAdd(args *skel.CmdArgs) error {
@@ -46,10 +46,10 @@ func cmdAdd(args *skel.CmdArgs) error {
 
 	// Fail fast, before touching anything, if the daemon is not serving.
 	if st, err := client.Status(); err != nil {
-		return types.NewError(types.ErrTryAgainLater, "xdpl2 node daemon unreachable",
+		return types.NewError(types.ErrTryAgainLater, "xdpbridge node daemon unreachable",
 			fmt.Sprintf("socket %s: %v", conf.Socket, err))
 	} else if !st.Ready {
-		return types.NewError(types.ErrTryAgainLater, "xdpl2 data path not ready", strings.Join(st.Problems, "; "))
+		return types.NewError(types.ErrTryAgainLater, "xdpbridge data path not ready", strings.Join(st.Problems, "; "))
 	}
 
 	netns, err := ns.GetNS(args.Netns)
@@ -167,7 +167,7 @@ func cmdAdd(args *skel.CmdArgs) error {
 		Network:      conf.Name,
 	})
 	if err != nil {
-		return types.NewError(types.ErrInternal, "xdpl2 port registration failed",
+		return types.NewError(types.ErrInternal, "xdpbridge port registration failed",
 			fmt.Sprintf("daemon at %s: %v", conf.Socket, err))
 	}
 
@@ -188,7 +188,7 @@ func cmdDel(args *skel.CmdArgs) error {
 	// DEL must succeed even if the daemon is down; its reconciler removes
 	// ports whose veth disappeared.
 	if err := client.DeletePort(args.ContainerID, args.IfName); err != nil {
-		fmt.Fprintf(os.Stderr, "xdpl2: unregistering port (continuing, daemon will garbage-collect): %v\n", err)
+		fmt.Fprintf(os.Stderr, "xdpbridge: unregistering port (continuing, daemon will garbage-collect): %v\n", err)
 	}
 	if conf.IPAM.Type != "" {
 		if err := ipam.ExecDel(conf.IPAM.Type, args.StdinData); err != nil {
@@ -278,10 +278,10 @@ func cmdStatus(args *skel.CmdArgs) error {
 	}
 	st, err := api.NewClient(conf.Socket, conf.Timeout()).Status()
 	if err != nil {
-		return types.NewError(errPluginNotAvailable, "xdpl2 node daemon unreachable", err.Error())
+		return types.NewError(errPluginNotAvailable, "xdpbridge node daemon unreachable", err.Error())
 	}
 	if !st.Ready {
-		return types.NewError(errPluginNotAvailable, "xdpl2 data path not ready", strings.Join(st.Problems, "; "))
+		return types.NewError(errPluginNotAvailable, "xdpbridge data path not ready", strings.Join(st.Problems, "; "))
 	}
 	return nil
 }

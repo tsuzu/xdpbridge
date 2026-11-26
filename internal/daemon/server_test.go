@@ -16,9 +16,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tsuzu/xdpl2/internal/api"
-	"github.com/tsuzu/xdpl2/internal/datapath"
-	"github.com/tsuzu/xdpl2/internal/k8swatch"
+	"github.com/tsuzu/xdpbridge/internal/api"
+	"github.com/tsuzu/xdpbridge/internal/datapath"
+	"github.com/tsuzu/xdpbridge/internal/k8swatch"
 )
 
 // fakeDP is an in-memory Dataplane.
@@ -427,7 +427,7 @@ func TestWatchdogAndHealth(t *testing.T) {
 	if st.Healthy || len(st.UnregisteredVeths) != 2 || !st.Ready {
 		t.Errorf("watchdog status: %+v", st)
 	}
-	if !strings.Contains(h.srv.Metrics(), "xdpl2_unregistered_veths 2") {
+	if !strings.Contains(h.srv.Metrics(), "xdpbridge_unregistered_veths 2") {
 		t.Error("metric missing")
 	}
 	h.dp.xdp = false
@@ -485,7 +485,7 @@ func TestK8sCrossCheckSurfacesInHealthAndMetrics(t *testing.T) {
 		t.Errorf("orphans: %q", st.K8s.OrphanPorts)
 	}
 	m := srv.Metrics()
-	for _, want := range []string{"xdpl2_k8s_missing_ports 1", "xdpl2_k8s_orphan_ports 1", "xdpl2_k8s_watch_synced 1", "xdpl2_healthy 0"} {
+	for _, want := range []string{"xdpbridge_k8s_missing_ports 1", "xdpbridge_k8s_orphan_ports 1", "xdpbridge_k8s_watch_synced 1", "xdpbridge_healthy 0"} {
 		if !strings.Contains(m, want) {
 			t.Errorf("metrics lack %q", want)
 		}
@@ -560,7 +560,7 @@ func TestNetnsPathInvisibleDoesNotGC(t *testing.T) {
 	if st.Healthy || st.NetnsNotVisible != 1 || !contains(st.Problems, "netns path is not visible") {
 		t.Errorf("expected a loud problem, got %+v", st)
 	}
-	if !strings.Contains(srv.Metrics(), "xdpl2_ports_netns_not_visible 1") {
+	if !strings.Contains(srv.Metrics(), "xdpbridge_ports_netns_not_visible 1") {
 		t.Error("metric missing")
 	}
 	if !st.Ready {
@@ -580,7 +580,7 @@ func TestNetnsPathInvisibleDoesNotGC(t *testing.T) {
 
 func TestDefaultPathExistsRunAliases(t *testing.T) {
 	// /proc/self exists under neither prefix; just exercise the fallbacks.
-	if DefaultPathExists("/var/run/xdpl2-definitely-missing") || DefaultPathExists("/run/xdpl2-definitely-missing") {
+	if DefaultPathExists("/var/run/xdpbridge-definitely-missing") || DefaultPathExists("/run/xdpbridge-definitely-missing") {
 		t.Error("missing paths reported as present")
 	}
 	if !DefaultPathExists("/proc/self") {

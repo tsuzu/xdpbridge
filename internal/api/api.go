@@ -18,7 +18,7 @@ import (
 )
 
 // DefaultSocket is where the daemon listens by default.
-const DefaultSocket = "/run/xdpl2/xdpl2.sock"
+const DefaultSocket = "/run/xdpbridge/xdpbridge.sock"
 
 // HostIfPrefix prefixes every host-side veth created by the CNI plugin. The
 // daemon uses it to detect veths that exist without a registration.
@@ -120,13 +120,13 @@ type K8sStatus struct {
 	Node string `json:"node"`
 	// Synced is true once pods and NADs have been listed.
 	Synced bool `json:"synced"`
-	// XDPL2NADs is the number of NetworkAttachmentDefinitions using xdpl2.
-	XDPL2NADs int `json:"xdpl2NADs"`
-	// PodsExpected counts live pods on the node with xdpl2 attachments;
+	// XDPBRIDGENADs is the number of NetworkAttachmentDefinitions using xdpbridge.
+	XDPBRIDGENADs int `json:"xdpbridgeNADs"`
+	// PodsExpected counts live pods on the node with xdpbridge attachments;
 	// PodsChecked those past the start-up grace period.
 	PodsExpected int `json:"podsExpected"`
 	PodsChecked  int `json:"podsChecked"`
-	// MissingPorts: pods that should have an xdpl2 port but do not.
+	// MissingPorts: pods that should have an xdpbridge port but do not.
 	MissingPorts []string `json:"missingPorts,omitempty"`
 	// OrphanPorts: registered ports whose pod is not on this node.
 	OrphanPorts []string `json:"orphanPorts,omitempty"`
@@ -179,7 +179,7 @@ func (c *Client) do(method, path string, in, out any) error {
 		}
 		body = bytes.NewReader(b)
 	}
-	req, err := http.NewRequest(method, "http://xdpl2"+path, body)
+	req, err := http.NewRequest(method, "http://xdpbridge"+path, body)
 	if err != nil {
 		return err
 	}

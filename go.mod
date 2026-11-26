@@ -1,4 +1,4 @@
-module github.com/tsuzu/xdpl2
+module github.com/tsuzu/xdpbridge
 
 go 1.23.4
 

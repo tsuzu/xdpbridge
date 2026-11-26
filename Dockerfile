@@ -10,6 +10,6 @@ ARG VERSION=v0.1.0-dev
 RUN make build VERSION=${VERSION}
 
 FROM gcr.io/distroless/static-debian12
-COPY --from=build /src/bin/xdpl2-daemon /src/bin/xdpl2-cni /usr/local/bin/
-COPY LICENSE /usr/share/doc/xdpl2/LICENSE
-ENTRYPOINT ["/usr/local/bin/xdpl2-daemon"]
+COPY --from=build /src/bin/xdpbridge-daemon /src/bin/xdpbridge-cni /usr/local/bin/
+COPY LICENSE /usr/share/doc/xdpbridge/LICENSE
+ENTRYPOINT ["/usr/local/bin/xdpbridge-daemon"]
