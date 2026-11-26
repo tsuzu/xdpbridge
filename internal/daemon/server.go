@@ -334,6 +334,12 @@ func (s *Server) Reconcile() {
 	var problems []string
 	changed := false
 	byID := map[uint32]*api.Port{}
+	fdbSet := map[string]uint32{}
+	if fdb, err := s.dp.FDB(); err == nil {
+		for _, e := range fdb {
+			fdbSet[fdbSetKey(e.MAC, e.VLAN)] = e.PortID
+		}
+	}
 
 	for key, p := range s.ports {
 		idx, err := s.links.IndexByName(p.HostIfName)
@@ -361,7 +367,7 @@ func (s *Server) Reconcile() {
 			want = newSpec
 			changed = true
 		}
-		if drift := s.checkPortLocked(want); drift != "" {
+		if drift := s.checkPortLocked(want, fdbSet); drift != "" {
 			s.log.Error("data path drift detected, repairing", "key", key, "id", p.ID, "drift", drift)
 			s.repairs.Add(1)
 			if err := s.dp.SetPort(want, nil); err != nil {
@@ -449,7 +455,15 @@ func (s *Server) Reconcile() {
 	}
 }
 
-func (s *Server) checkPortLocked(want datapath.PortSpec) string {
+func fdbSetKey(mac net.HardwareAddr, vlan uint16) string {
+	return fmt.Sprintf("%s/%d", mac, vlan)
+}
+
+// checkPortLocked returns a description of the first data path entry for
+// want that is missing or wrong, or "" if all is in place. fdb is a snapshot
+// of the forwarding database taken at the start of the pass (re-attaching a
+// port to a new ifindex does not change its fdb entry).
+func (s *Server) checkPortLocked(want datapath.PortSpec, fdb map[string]uint32) string {
 	got, err := s.dp.LookupPort(want.ID)
 	if err != nil || got.Ifindex != want.Ifindex || got.VLAN != want.VLAN || got.Kind != want.Kind || got.MAC.String() != want.MAC.String() {
 		return "port_table"
@@ -457,18 +471,7 @@ func (s *Server) checkPortLocked(want datapath.PortSpec) string {
 	if id, err := s.dp.LookupIfindex(want.Ifindex); err != nil || id != want.ID {
 		return "ifindex_ports"
 	}
-	fdb, err := s.dp.FDB()
-	if err != nil {
-		return "fdb unreadable"
-	}
-	found := false
-	for _, e := range fdb {
-		if e.MAC.String() == want.MAC.String() && e.VLAN == want.VLAN && e.PortID == want.ID {
-			found = true
-			break
-		}
-	}
-	if !found {
+	if id, ok := fdb[fdbSetKey(want.MAC, want.VLAN)]; !ok || id != want.ID {
 		return "ports (fdb)"
 	}
 	if !s.dp.PortLinkPinned(want.ID, want.Ifindex) {
