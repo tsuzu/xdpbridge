@@ -127,9 +127,12 @@ func InsertTag(f []byte, vlan uint16) []byte {
 
 // Counters are exported by the daemon.
 type Counters struct {
-	Events      atomic.Uint64
-	TxFrames    atomic.Uint64
-	TxErrors    atomic.Uint64
+	Events   atomic.Uint64
+	TxFrames atomic.Uint64
+	TxErrors atomic.Uint64
+	// TxPortGone counts copies for an interface that vanished (pod deleted
+	// before the reconciler removed its port); expected, not an error.
+	TxPortGone  atomic.Uint64
 	ParseErrors atomic.Uint64
 }
 
@@ -188,6 +191,10 @@ func (r *Replicator) Run() {
 		r.Counters.Events.Add(1)
 		for _, tx := range Plan(ev, r.ports(), r.uplink) {
 			if err := r.send(tx); err != nil {
+				if errors.Is(err, unix.ENXIO) || errors.Is(err, unix.ENODEV) {
+					r.Counters.TxPortGone.Add(1)
+					continue
+				}
 				r.Counters.TxErrors.Add(1)
 				r.log.Debug("flood transmit failed", "ifindex", tx.Ifindex, "err", err)
 				continue
