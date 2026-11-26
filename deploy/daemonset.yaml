@@ -85,6 +85,11 @@ spec:
               value: /var/lib/xdpl2/state.json
             - name: XDPL2_PROBE_ADDR
               value: "127.0.0.1:9967"
+            # Used by the optional Kubernetes-API watchdog (deploy/k8s-watch).
+            - name: XDPL2_NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
           securityContext:
             # Needs CAP_BPF, CAP_NET_ADMIN, CAP_NET_RAW, CAP_SYS_ADMIN
             # (bpffs, netlink XDP/TCX attach, AF_PACKET).

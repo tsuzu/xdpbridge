@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Optional overlay: enables the Kubernetes-API watchdog, which cross-checks
+# registered ports against the pods on each node and fails /healthz when a
+# pod runs without its xdpl2 interface.
+#
+#   kubectl apply -k deploy/k8s-watch/
+#
+# The base deploys with automountServiceAccountToken: false; only this
+# overlay mounts a token and grants read access to pods and NADs.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../
+  - rbac.yaml
+patches:
+  - path: daemonset-patch.yaml

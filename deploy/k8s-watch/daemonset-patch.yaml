@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: Apache-2.0
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: xdpl2
+  namespace: xdpl2-system
+spec:
+  template:
+    spec:
+      # Pod-level setting overrides the ServiceAccount's "false".
+      automountServiceAccountToken: true
+      containers:
+        - name: daemon
+          env:
+            - name: XDPL2_K8S_WATCH
+              value: "true"

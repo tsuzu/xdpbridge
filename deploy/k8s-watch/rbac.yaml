@@ -1,0 +1,29 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Read-only access for the watchdog. RBAC cannot restrict a ServiceAccount
+# to the pods of one node; the daemon limits itself with the field selector
+# spec.nodeName=<its node> on every list/watch.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: xdpl2-k8s-watch
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["k8s.cni.cncf.io"]
+    resources: ["network-attachment-definitions"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: xdpl2-k8s-watch
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: xdpl2-k8s-watch
+subjects:
+  - kind: ServiceAccount
+    name: xdpl2
+    namespace: xdpl2-system

@@ -24,7 +24,7 @@ import (
 func manifestFiles(t *testing.T) []string {
 	t.Helper()
 	var files []string
-	for _, pat := range []string{"*.yaml", "examples/*.yaml"} {
+	for _, pat := range []string{"*.yaml", "examples/*.yaml", "*/*.yaml"} {
 		m, err := filepath.Glob(pat)
 		if err != nil {
 			t.Fatal(err)
@@ -34,7 +34,63 @@ func manifestFiles(t *testing.T) []string {
 	if len(files) == 0 {
 		t.Fatal("no manifests found")
 	}
-	return files
+	seen := map[string]bool{}
+	var out []string
+	for _, f := range files {
+		if !seen[f] {
+			seen[f] = true
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+// TestWatchOverlay checks the k8s-watch overlay patches the DaemonSet the
+// way the daemon expects (no kustomize binary needed).
+func TestWatchOverlay(t *testing.T) {
+	b, err := os.ReadFile("k8s-watch/daemonset-patch.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var p struct {
+		Metadata struct{ Name, Namespace string }
+		Spec     struct {
+			Template struct {
+				Spec struct {
+					Automount  *bool `yaml:"automountServiceAccountToken"`
+					Containers []struct {
+						Name string
+						Env  []struct{ Name, Value string }
+					}
+				}
+			}
+		}
+	}
+	if err := yaml.Unmarshal(b, &p); err != nil {
+		t.Fatal(err)
+	}
+	if p.Metadata.Name != "xdpl2" || p.Metadata.Namespace != "xdpl2-system" {
+		t.Error("patch does not target the xdpl2 DaemonSet")
+	}
+	ps := p.Spec.Template.Spec
+	if ps.Automount == nil || !*ps.Automount {
+		t.Error("overlay must mount the ServiceAccount token")
+	}
+	ok := false
+	for _, c := range ps.Containers {
+		for _, e := range c.Env {
+			ok = ok || (c.Name == "daemon" && e.Name == "XDPL2_K8S_WATCH" && e.Value == "true")
+		}
+	}
+	if !ok {
+		t.Error("overlay must set XDPL2_K8S_WATCH=true on the daemon container")
+	}
+	base, _ := os.ReadFile("daemonset.yaml")
+	for _, want := range []string{"automountServiceAccountToken: false", "XDPL2_NODE_NAME", "spec.nodeName"} {
+		if !strings.Contains(string(base), want) {
+			t.Errorf("base DaemonSet lacks %q", want)
+		}
+	}
 }
 
 type doc struct {
@@ -72,7 +128,7 @@ func TestManifestsParse(t *testing.T) {
 			}
 			if d.Kind == "Kustomization" {
 				for _, r := range d.Resources {
-					if _, err := os.Stat(r); err != nil {
+					if _, err := os.Stat(filepath.Join(filepath.Dir(f), r)); err != nil {
 						t.Errorf("%s: resource %s: %v", f, r, err)
 					}
 				}
