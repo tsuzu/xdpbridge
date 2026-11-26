@@ -39,17 +39,46 @@ test. The run at the bottom covers both XDP modes.
 
 ## Phase 2: cluster-side results (workstream A, operator)
 
-<!-- PLACEHOLDER: to be filled in by the operator. Keep environment-specific
-     values (addresses, hostnames, interface names) out of this file. -->
+<!-- Reported by the operator; environment-specific values (addresses,
+     hostnames, interface names) are deliberately omitted. -->
 
-_Pending. Operator results so far, reported in conversation and to be
-re-run with the fixes above:_ native XDP attach on an `i40e` NIC, Cilium
-TCX programs untouched, CNI ADD/DEL against the real daemon, a VLAN port
-reaching the LAN gateway and a LAN host with real ARP, local port-to-port
-switching, and wire broadcasts flooded into ports all passed. Two issues
-were found: host→port with the host IP on a VLAN subinterface failed, and
-there was no documented teardown. Both are fixed above and await
-re-validation.
+Setup: one labelled node with an Intel X710 (`i40e`) uplink, in a Talos
+cluster running Cilium (TCX). The daemon and CNI binaries ran in a
+throwaway privileged hostNetwork harness pod with a dead-man switch. Ports
+were netns ports registered through the real daemon socket and CNI binary.
+Multus end-to-end was not part of this run (phase 2b).
+
+### Run 1: binaries from v0.1.0 (phase-1 tree)
+
+| Check | Result |
+|---|---|
+| XDP attaches in native mode on `i40e` | PASS |
+| Cilium TCX programs on the uplink untouched; node, API server and production workloads healthy | PASS |
+| CNI ADD/DEL against the real daemon socket | PASS |
+| VLAN 100 port ↔ real LAN gateway and a real LAN host, both ways, real ARP | PASS |
+| Port ↔ port local switching (≈0.045 ms RTT) | PASS |
+| Wire-originated broadcasts flooded into ports (tcpdump in port netns) | PASS |
+| Host → port with the host IP on a VLAN subinterface of the uplink | **FAIL**: host ARP broadcast never reached the port, ARP stayed FAILED |
+| Removing the data path after daemon stop | **FAIL**: no usable teardown path; pinned links had to be removed by hand |
+
+Not a bug (documented in design.md §8): a port cannot reach a same-node
+legacy macvlan endpoint, because the switch does not hairpin.
+
+### Run 2: re-validation with binaries rebuilt from 1395596 (phase-2 fixes)
+
+| Check | Result |
+|---|---|
+| Daemon logs host VLAN membership `[0 100]` | PASS |
+| Host (VLAN subinterface) → port: ping 3/3, ARP REACHABLE (was FAILED) | PASS |
+| Port → host: ping 3/3 | PASS |
+| Port → LAN gateway: ping 3/3 | PASS |
+| LAN host → port: ping 3/3 | PASS |
+| `xdpl2-daemon teardown` after CNI DEL and daemon stop: `/sys/fs/bpf/xdpl2` removed, bpftool shows the XDP slot empty again | PASS |
+| After teardown: Cilium TCX programs intact, node Ready, production workloads unaffected | PASS |
+
+Both run-1 failures are fixed on real hardware. Still open from workstream
+A: Multus end-to-end wiring on Talos (phase 2b, see design.md §11) and the
+Kubernetes-API watchdog against a real API server.
 
 ## Phase 1 summary
 
