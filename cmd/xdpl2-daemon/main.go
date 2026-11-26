@@ -74,7 +74,7 @@ func parseFlags(fs *flag.FlagSet, args []string) (*options, error) {
 	fs.DurationVar(&o.k8sGrace, "k8s-grace", time.Minute, "how long a pod may run without its port (or a port exist without its pod) before it is reported")
 	fs.BoolVar(&o.force, "force", false, "teardown: proceed even if a daemon answers on --socket")
 	fs.StringVar(&o.installSrc, "src", "/usr/local/bin/xdpl2-cni", "install-cni: plugin binary to copy")
-	fs.StringVar(&o.installDest, "dest", "/host/opt/cni/bin", "install-cni: CNI bin directory")
+	fs.StringVar(&o.installDest, "dest", envOr("XDPL2_CNI_BIN_DIR", "/host/opt/cni/bin"), "install-cni: CNI bin directory as mounted in the container [XDPL2_CNI_BIN_DIR]")
 	fs.DurationVar(&o.reconcile, "reconcile-interval", 10*time.Second, "reconciliation interval")
 	fs.StringVar(&o.logLevel, "log-level", envOr("XDPL2_LOG_LEVEL", "info"), "debug, info, warn, error [XDPL2_LOG_LEVEL]")
 	fs.StringVar(&o.logFormat, "log-format", envOr("XDPL2_LOG_FORMAT", "json"), "json or text [XDPL2_LOG_FORMAT]")
