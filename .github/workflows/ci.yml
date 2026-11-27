@@ -18,8 +18,8 @@ jobs:
     name: Build, vet, unit tests
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
       - name: Install BPF toolchain
@@ -36,7 +36,7 @@ jobs:
         run: make unit
       - name: Build binaries
         run: make build
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: bin
           path: bin/
@@ -47,8 +47,8 @@ jobs:
     env:
       KUBECONFORM_VERSION: v0.6.7
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
       - name: Offline manifest checks
@@ -68,8 +68,8 @@ jobs:
     runs-on: ubuntu-24.04
     needs: build
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
       - name: Install toolchain and test tools
@@ -84,7 +84,7 @@ jobs:
       - name: Run netns integration test (native + generic XDP)
         run: sudo test/netns_test.sh --mode both --testlog "$RUNNER_TEMP/TESTLOG.md"
       - if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: testlog
           path: ${{ runner.temp }}/TESTLOG.md
