@@ -49,6 +49,15 @@ The project follows Semantic Versioning. Before 1.0.0, breaking changes to
 the daemon API, CNI config keys or the pinned map layout are allowed in
 minor releases but must be called out in the release notes.
 
+## Releasing
+
+Pushing a tag matching `v*` (e.g. `git tag v0.1.0 && git push origin
+v0.1.0`) runs `.github/workflows/release.yml`. It builds the `Dockerfile`
+for `linux/amd64`, with `VERSION` set to the tag, and pushes
+`ghcr.io/tsuzu/xdpbridge:<tag>` and `:latest` using the workflow's
+`GITHUB_TOKEN`. Before tagging, update the image tag in
+`deploy/daemonset.yaml` to the new version.
+
 ## Reporting security issues
 
 Please do not open a public issue for security problems. Use GitHub's
